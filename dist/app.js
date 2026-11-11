@@ -48,10 +48,39 @@ let selectedDate = ago(0);
 let query = '';
 let chartScope = 'day';
 let editing = null;
-let lookupData = {};
 let lookupController;
-let sound;
 let toastTimer;
+let pdfDocuments = [];
+let libraryError = '';
+let libraryReady = false;
+let importBusy = false;
+let importStatus = '';
+let importResults = [];
+let formSession = 0;
+let saving = false;
+const pendingLookups = new Set();
+
+const libraryLoad = Learning.documents().then((documents) => {
+  pdfDocuments = documents;
+}).catch((error) => {
+  libraryError = error.message;
+}).finally(() => {
+  libraryReady = true;
+  if (!editor.open) render();
+});
+
+function examplesFor(word) {
+  const legacy = word.example ? [{ text: word.example, translation: word.translation, source: '我的例句' }] : [];
+  return Learning.uniqueExamples([
+    ...Learning.matchedExamples(word.word, pdfDocuments),
+    ...legacy,
+    ...(word.examples ?? [])
+  ]);
+}
+
+function matchesFor(word) {
+  return Learning.matchedExamples(word.word, pdfDocuments);
+}
 
 function toast(message) {
   $('#toast').textContent = message;
@@ -130,7 +159,7 @@ function showGrid() {
   const prefix = selectedDate.slice(0, length);
   const term = query.trim().toLowerCase();
   const visible = (words.length ? words : samples).filter(({ word, meaning, added }) =>
-    added.startsWith(prefix) && (word.toLowerCase().includes(term) || meaning.toLowerCase().includes(term))
+    added.startsWith(prefix) && (word.toLowerCase().includes(term) || (meaning ?? '').toLowerCase().includes(term))
   ).sort((a, b) => b.added.localeCompare(a.added));
   $('#list-title').textContent = `${words.length ? (prefix || '所有单词') : '示例词块'} · ${visible.length}`;
   $('#grid').innerHTML = visible.length ? visible.map((entry) =>
@@ -141,11 +170,18 @@ function showGrid() {
 }
 
 function showWord(word) {
+  const examples = examplesFor(word);
+  const missing = [
+    ...(!word.us ? ['美式音标'] : []),
+    ...(!word.ipa ? ['国际音标'] : []),
+    ...(!word.meaning ? ['中文释义'] : []),
+    ...(!examples.length ? ['例句'] : [])
+  ];
   view.innerHTML = `<article class="detail">
     <a class="back" href="#words">← 返回单词本</a>
     <div class="detail-head level-${word.level}">
       <small>${word.sample ? '示例词块 · ' : '录入于 '}${safe(word.added)}</small>
-      <h1>${safe(word.word)}</h1><p>${safe(word.meaning || '待补充中文释义')}</p>
+      <h1>${safe(word.word)}</h1><p class="definition">${safe(word.meaning || '中文释义待补充')}</p>
     </div>
     <section class="panel">
       <h2>音标与发音</h2>
@@ -154,12 +190,92 @@ function showWord(word) {
         <div><small>国际音标（IPA）</small><p>${safe(word.ipa || '待补充')}</p><button data-speak="uk">▷ 英式发音</button></div>
       </div>
     </section>
-    <section class="panel"><h2>例句</h2><p>${safe(word.example || '待补充例句')}</p>${word.translation ? `<p class="muted">${safe(word.translation)}</p>` : ''}</section>
+    ${word.definitions?.length ? `<section class="panel"><h2>英文释义</h2>${word.definitions.map((definition) =>
+      `<p><small class="muted">${safe(definition.partOfSpeech)}.</small> ${safe(definition.text)}</p>`).join('')}</section>` : ''}
+    <section class="panel">
+      <div class="toolbar"><h2>例句 <span class="muted">${examples.length}</span></h2><a class="text-link" href="#library">管理 PDF 例句库 →</a></div>
+      ${examples.length ? examples.map((example, index) => `<div class="example">
+        <div class="example-line"><p>${safe(example.text)}</p><button data-sentence="${index}" class="speaker" aria-label="朗读例句 ${index + 1}" title="朗读例句">🔊</button></div>
+        ${example.translation ? `<p class="muted">${safe(example.translation)}</p>` : ''}
+        <div class="example-source">${example.sources?.length ? example.sources.map((source) =>
+          `<span>Little Fox · ${safe(source.name)} · 第 ${source.page} 页</span>`).join('') : safe(example.source || '我的例句')}</div>
+      </div>`).join('') : `<p class="muted">${libraryReady ? '暂未找到例句，可以上传 Little Fox 单词 PDF 自动匹配。' : '正在读取 PDF 例句库…'}</p>`}
+    </section>
+    ${!word.sample && missing.length ? `<section class="panel toolbar"><p class="muted">待补充${safe(missing.join('、'))}。</p><button data-refresh>自动补充</button></section>` : ''}
     ${word.sample ? '' : `<section class="panel"><div class="toolbar"><h2>熟悉程度</h2><button data-edit>编辑单词</button></div>
       <div class="level-options" role="group" aria-label="设置熟悉度">${levels.map((label, index) =>
         `<button class="level-${index}" data-level="${index}" aria-pressed="${index === word.level}">${label}</button>`).join('')}</div>
     </section>`}
   </article>`;
+}
+
+function showLibrary() {
+  const countsByPdf = new Map();
+  let matched = 0;
+  for (const word of words) {
+    const ids = new Set(matchesFor(word).flatMap((example) => example.sources.map((source) => source.documentId)));
+    if (ids.size) matched++;
+    for (const id of ids) countsByPdf.set(id, (countsByPdf.get(id) ?? 0) + 1);
+  }
+  view.innerHTML = `<article class="library">
+    <div class="toolbar"><div><h1>PDF 例句库</h1><p class="muted library-intro">上传 Little Fox 单词 PDF，自动把例句关联到单词。</p></div>
+      <button class="primary" data-upload ${importBusy || !libraryReady || libraryError ? 'disabled' : ''}>＋ 上传 PDF</button></div>
+    <div class="metrics library-metrics">
+      <div class="metric">PDF 文件<strong>${pdfDocuments.length}</strong></div>
+      <div class="metric">已匹配的生词<strong>${matched}</strong></div>
+    </div>
+    <p class="muted form-note">PDF 在本机解析并保存。支持多选，可提取文字的 PDF 会自动识别完整英文例句。</p>
+    ${libraryError ? `<p class="error-message" role="alert">${safe(libraryError)}</p>` : ''}
+    <p id="import-status" role="status">${safe(importStatus || (!libraryReady ? '正在读取例句库…' : ''))}</p>
+    <div id="import-results">${importResults.map((result) =>
+      `<p class="${result.ok ? 'success-message' : 'error-message'}">${safe(result.name)} · ${safe(result.message)}</p>`).join('')}</div>
+    <div class="pdf-list">${pdfDocuments.length ? [...pdfDocuments].sort((a, b) => b.added.localeCompare(a.added)).map((pdf) => {
+      const count = countsByPdf.get(pdf.id) ?? 0;
+      return `<section class="panel pdf-card"><div class="pdf-icon" aria-hidden="true">PDF</div>
+        <div class="pdf-info"><h2>${safe(pdf.name)}</h2><p class="muted">${pdf.pageCount} 页 · ${pdf.examples.length} 条例句 · 匹配 ${count} 个生词</p>
+        <small class="muted">上传于 ${safe(pdf.added.slice(0, 10))}</small></div>
+        <button data-open-pdf="${safe(pdf.id)}">查看 PDF</button></section>`;
+    }).join('') : '<div class="empty">上传第一份 PDF，开始收集 Little Fox 例句。</div>'}</div>
+  </article>`;
+}
+
+async function importPdfs(files) {
+  if (importBusy || libraryError) return;
+  importBusy = true;
+  importResults = [];
+  importStatus = '准备导入…';
+  render();
+  try {
+    await libraryLoad;
+    for (const file of files) {
+      importStatus = '正在解析 ' + file.name;
+      if (location.hash === '#library') showLibrary();
+      try {
+        if (!/\.pdf$/i.test(file.name)) throw new Error('请选择 PDF 文件。');
+        const pdf = await Learning.parsePdf(file, (page, total) => {
+          importStatus = `正在解析 ${file.name} · 第 ${page} / ${total} 页`;
+          if (location.hash === '#library') $('#import-status').textContent = importStatus;
+        });
+        if (pdfDocuments.some((item) => item.id === pdf.id)) {
+          importResults.push({ name: file.name, ok: true, message: '已在例句库中，已跳过重复文件' });
+          continue;
+        }
+        await Learning.storeDocument(pdf);
+        pdfDocuments = [...pdfDocuments, pdf];
+        const count = words.filter((word) => matchesFor(word).some((example) =>
+          example.sources.some((source) => source.documentId === pdf.id))).length;
+        importResults.push({ name: file.name, ok: true, message: `已导入 ${pdf.examples.length} 条例句，匹配 ${count} 个生词` });
+      } catch (error) {
+        const message = error.name === 'PasswordException' ? 'PDF 有密码保护，请上传已解锁的文件。' : error.message;
+        importResults.push({ name: file.name, ok: false, message });
+      }
+    }
+  } finally {
+    importBusy = false;
+    importStatus = '导入完成，之后添加的生词也会自动匹配。';
+    $('#pdf-files').value = '';
+    render();
+  }
 }
 
 function chartPeriods(mode) {
@@ -199,133 +315,186 @@ function activeWord() {
 
 function render() {
   const stats = location.hash === '#stats';
+  const library = location.hash === '#library';
   const word = activeWord();
   for (const link of document.querySelectorAll('[data-page]')) {
-    const active = link.dataset.page === (stats ? 'stats' : 'words');
+    const active = link.dataset.page === (stats ? 'stats' : library ? 'library' : 'words');
     link.classList.toggle('active', active);
     if (active) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   }
-  $('#breadcrumb').textContent = stats ? '我的词库 / 学习统计' : '我的词库 / 单词本' + (word ? ' / 单词详情' : '');
+  $('#breadcrumb').textContent = stats ? '我的词库 / 学习统计' : library ? '我的词库 / PDF 例句库' : '我的词库 / 单词本' + (word ? ' / 单词详情' : '');
   if (stats) showStats();
+  else if (library) showLibrary();
   else if (word) showWord(word);
   else wordList();
 }
 
 function openEditor(word = null) {
+  lookupController?.abort();
+  formSession++;
+  saving = false;
   editing = word;
-  lookupData = word ? { usAudio: word.usAudio, ukAudio: word.ukAudio, word: word.word } : {};
   form.reset();
   for (const field of ['word', 'meaning', 'us', 'ipa', 'example', 'translation']) {
     fields[field].value = word?.[field] ?? '';
   }
+  fields.word.readOnly = Boolean(word);
+  $('#manual-fields').hidden = !word;
+  $('#manual-fields').open = Boolean(word);
+  $('#auto-note').hidden = Boolean(word);
+  $('#save-entry').disabled = false;
+  $('#save-entry').textContent = '保存单词';
   $('#form-status').textContent = '';
   $('#editor-title').textContent = word ? '编辑单词' : '添加单词';
   editor.showModal();
+  fields.word.focus();
 }
 
-function speak(word, accent) {
-  sound?.pause();
-  window.speechSynthesis?.cancel();
-  const fallback = () => {
-    const lang = accent === 'us' ? 'en-US' : 'en-GB';
-    const voice = window.speechSynthesis?.getVoices().find((item) => item.lang.toLowerCase().replace('_', '-') === lang.toLowerCase());
-    if (!voice) {
-      toast('当前设备没有可用的对应口音语音。');
-      return;
-    }
-    const utterance = new SpeechSynthesisUtterance(word.word);
-    utterance.lang = lang;
-    utterance.voice = voice;
-    utterance.onerror = ({ error }) => {
-      if (error !== 'interrupted' && error !== 'canceled') toast('暂时无法播放发音。');
-    };
-    speechSynthesis.speak(utterance);
+function mergeLookup(word, data) {
+  return {
+    ...word,
+    meaning: word.meaning || data.meaning,
+    us: word.us || data.us,
+    ipa: word.ipa || data.ipa,
+    usAudio: data.usAudio || word.usAudio,
+    ukAudio: data.ukAudio || word.ukAudio,
+    definitions: data.definitions.length ? data.definitions : word.definitions,
+    examples: Learning.uniqueExamples([...(word.examples ?? []), ...data.examples]),
+    lookupMissing: data.lookupMissing
   };
-  const url = word[accent + 'Audio'];
-  if (!url) {
-    fallback();
-    return;
+}
+
+async function refreshWord(word, button) {
+  if (pendingLookups.has(word.id)) return;
+  pendingLookups.add(word.id);
+  button.disabled = true;
+  button.textContent = '正在获取…';
+  try {
+    const data = await Learning.lookup(word.word, undefined, matchesFor(word).length > 0);
+    const current = words.find((item) => item.id === word.id);
+    if (!current) return;
+    if (!save(words.map((item) => item.id === word.id ? mergeLookup(current, data) : item))) return;
+    render();
+    toast(data.lookupMissing.length ? '已补充查到的内容，部分数据暂时不可用。' : '已自动补充单词信息');
+  } catch (error) {
+    toast(error.message || '获取失败，请稍后重试。');
+  } finally {
+    pendingLookups.delete(word.id);
+    if (button.isConnected) {
+      button.disabled = false;
+      button.textContent = '自动补充';
+    }
   }
-  sound = new Audio(url);
-  const currentSound = sound;
-  sound.play().catch(() => {
-    if (sound === currentSound) fallback();
-  });
+}
+
+async function readAloud(text, accent, url, button, isSentence = false) {
+  const label = button.textContent;
+  button.textContent = '◌';
+  button.disabled = true;
+  try {
+    await Learning.speak(text, accent, url, isSentence);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.textContent = label;
+    button.disabled = false;
+  }
 }
 
 $('#add').addEventListener('click', () => openEditor());
 for (const button of ['#cancel', '#close']) $(button).addEventListener('click', () => editor.close());
-editor.addEventListener('close', () => lookupController?.abort());
-$('#lookup').addEventListener('click', async () => {
-  const word = fields.word.value.trim();
-  if (!word) {
-    fields.word.focus();
-    return;
-  }
-  const controller = new AbortController();
-  lookupController = controller;
-  const timeout = setTimeout(() => controller.abort(), 7500);
-  const status = $('#form-status');
-  $('#lookup').disabled = true;
-  status.textContent = '正在查词…';
-  try {
-    const response = await fetch('https://api.dictionaryapi.dev/api/v2/entries/en/' + encodeURIComponent(word), { signal: controller.signal });
-    if (!response.ok) throw new Error('Lookup unavailable');
-    const entries = await response.json();
-    if (!editor.open) return;
-    if (fields.word.value.trim() !== word) {
-      status.textContent = '单词已修改，请重新查词。';
-      return;
-    }
-    const phonetics = entries.flatMap((entry) => entry.phonetics ?? []);
-    const accent = (name) => phonetics.find(({ audio }) => new RegExp('-' + name + '(?:[_.-]|$)', 'i').test(audio));
-    const us = accent('us');
-    const uk = accent('uk') ?? accent('gb');
-    const example = entries.flatMap((entry) => entry.meanings ?? []).flatMap((meaning) => meaning.definitions ?? []).find((definition) => definition.example);
-    fields.us.value ||= us?.text ?? '';
-    fields.ipa.value ||= uk?.text ?? entries.find((entry) => entry.phonetic)?.phonetic ?? phonetics.find((item) => item.text)?.text ?? '';
-    fields.example.value ||= example?.example ?? '';
-    lookupData = { word, usAudio: us?.audio, ukAudio: uk?.audio };
-    status.textContent = '已填入查到的音标和例句，缺少的内容可手动补充。';
-  } catch {
-    if (editor.open) status.textContent = '暂未查到结果，可以手动填写。';
-  } finally {
-    clearTimeout(timeout);
-    $('#lookup').disabled = false;
-  }
+editor.addEventListener('close', () => {
+  formSession++;
+  lookupController?.abort();
+});
+$('#pdf-files').addEventListener('change', (event) => {
+  const files = [...event.target.files];
+  if (files.length) importPdfs(files);
 });
 
-form.addEventListener('submit', (event) => {
+form.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const values = Object.fromEntries([...new FormData(form)].map(([name, value]) => [name, value.trim()]));
-  if (!values.word) {
-    $('#form-status').textContent = '请输入英文单词。';
+  if (saving) return;
+  const wordText = Learning.normalize(fields.word.value);
+  if (!wordText || !/^[a-zA-Z][a-zA-Z'’ -]*$/.test(wordText)) {
+    $('#form-status').textContent = '请输入英文单词或短语。';
     fields.word.focus();
     return;
   }
-  if (words.some((word) => word.id !== editing?.id && word.word.toLowerCase() === values.word.toLowerCase())) {
+  if (words.some((word) => word.id !== editing?.id && Learning.termKey(word.word) === Learning.termKey(wordText))) {
     $('#form-status').textContent = '这个单词已在词库中。';
     return;
   }
-  const entry = {
-    ...(editing ?? { id: crypto.randomUUID(), added: ago(0), level: 0 }),
-    ...values,
-    usAudio: lookupData.word === values.word ? lookupData.usAudio : undefined,
-    ukAudio: lookupData.word === values.word ? lookupData.ukAudio : undefined
-  };
-  const next = editing ? words.map((word) => word.id === entry.id ? entry : word) : [entry, ...words];
-  if (!save(next)) return;
-  editor.close();
-  toast(editing ? '已保存修改' : '已添加到单词本');
-  location.hash = '#word/' + entry.id;
-  render();
+  const session = formSession;
+  const previous = editing && words.find((word) => word.id === editing.id);
+  if (editing && !previous) {
+    $('#form-status').textContent = '该单词已在其他页面发生变化，请重新打开。';
+    return;
+  }
+  saving = true;
+  $('#save-entry').disabled = true;
+  let entry;
+  try {
+    if (previous) {
+      entry = { ...previous };
+      for (const field of ['meaning', 'us', 'ipa', 'example', 'translation']) {
+        entry[field] = fields[field].value.trim();
+      }
+    } else {
+      $('#form-status').textContent = '正在自动补充音标、中文释义和例句…';
+      $('#save-entry').textContent = '正在补充…';
+      fields.word.readOnly = true;
+      const controller = new AbortController();
+      lookupController = controller;
+      // Preserve the date when the user submits, including a lookup crossing midnight.
+      entry = { id: crypto.randomUUID(), word: wordText, added: ago(0), level: 0 };
+      await libraryLoad;
+      const data = await Learning.lookup(wordText, controller.signal, matchesFor(entry).length > 0);
+      if (session !== formSession || !editor.open) return;
+      entry = mergeLookup(entry, data);
+    }
+    if (session !== formSession || !editor.open) return;
+    // Another open page may have added the same word while network lookup was running.
+    if (words.some((word) => word.id !== entry.id && Learning.termKey(word.word) === Learning.termKey(entry.word))) {
+      $('#form-status').textContent = '这个单词已在词库中。';
+      return;
+    }
+    const next = previous ? words.map((word) => word.id === entry.id ? entry : word) : [entry, ...words];
+    if (!save(next)) return;
+    editor.close();
+    location.hash = '#word/' + entry.id;
+    render();
+    toast(previous ? '已保存修改' : entry.lookupMissing.length
+      ? '单词已保存，部分信息暂未查到，可在详情页重试。'
+      : '已自动补充单词信息');
+  } catch (error) {
+    if (session === formSession && error.name !== 'AbortError') {
+      $('#form-status').textContent = '获取失败，请重试。';
+    }
+  } finally {
+    if (session === formSession) {
+      saving = false;
+      fields.word.readOnly = Boolean(editing);
+      $('#save-entry').disabled = false;
+      $('#save-entry').textContent = '保存单词';
+    }
+  }
 });
 
 view.addEventListener('click', (event) => {
   const button = event.target.closest('button');
   if (!button) return;
   const { scope: nextScope, chart, speak: accent, level } = button.dataset;
+  if (button.hasAttribute('data-upload')) $('#pdf-files').click();
+  if (button.dataset.openPdf) {
+    const pdf = pdfDocuments.find((item) => item.id === button.dataset.openPdf);
+    if (pdf?.file) {
+      const url = URL.createObjectURL(pdf.file);
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+  }
   if (nextScope) {
     scope = nextScope;
     for (const item of view.querySelectorAll('[data-scope]')) item.setAttribute('aria-pressed', String(item === button));
@@ -339,7 +508,12 @@ view.addEventListener('click', (event) => {
   }
   const word = activeWord();
   if (!word) return;
-  if (accent) speak(word, accent);
+  if (accent) readAloud(word.word, accent, word[accent + 'Audio'], button);
+  if (button.dataset.sentence !== undefined) {
+    const example = examplesFor(word)[Number(button.dataset.sentence)];
+    if (example) readAloud(example.text, 'us', undefined, button, true);
+  }
+  if (button.hasAttribute('data-refresh')) refreshWord(word, button);
   if (button.hasAttribute('data-edit')) openEditor(word);
   if (level !== undefined && word.level !== Number(level)) {
     const updated = { ...word, level: Number(level), masteredOn: level === '3' ? ago(0) : undefined };
@@ -351,8 +525,7 @@ view.addEventListener('click', (event) => {
 });
 
 window.addEventListener('hashchange', () => {
-  sound?.pause();
-  window.speechSynthesis?.cancel();
+  Learning.stopSpeech();
   render();
   window.scrollTo(0, 0);
 });

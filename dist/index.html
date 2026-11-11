@@ -6,6 +6,7 @@
   <meta name="description" content="用色彩记录熟悉度的英语生词本">
   <title>词块 · 英语生词本</title>
   <link rel="stylesheet" href="style.css">
+  <script src="learning.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -14,6 +15,7 @@
     <nav aria-label="主导航">
       <a href="#words" data-page="words"><span aria-hidden="true">▦</span> 单词本</a>
       <a href="#stats" data-page="stats"><span aria-hidden="true">▥</span> 学习统计</a>
+      <a href="#library" data-page="library"><span aria-hidden="true">▤</span> PDF 例句库</a>
     </nav>
     <div class="sidebar-foot"><i></i> 保存在此浏览器</div>
   </aside>
@@ -24,15 +26,19 @@
   <dialog id="editor">
     <form id="entry">
       <div class="dialog-head"><h2 id="editor-title">添加单词</h2><button type="button" class="icon" id="close" aria-label="关闭">×</button></div>
-      <label>英文单词 <span class="required">*</span><div class="lookup"><input name="word" required maxlength="60" placeholder="例如 serendipity"><button type="button" id="lookup">查词</button></div></label>
+      <label>英文单词 <span class="required">*</span><input name="word" required maxlength="60" placeholder="例如 adventure" autocomplete="off" spellcheck="false"></label>
+      <p class="muted form-note" id="auto-note">保存时自动补充音标、中文释义和例句，并匹配 PDF 例句库。</p>
       <p id="form-status" role="status"></p>
-      <label>中文释义<input name="meaning" placeholder="例如 意外发现美好事物的运气"></label>
-      <div class="paired"><label>美式音标<input name="us" placeholder="/ˌserənˈdɪpəti/"></label><label>国际音标（IPA）<input name="ipa" placeholder="/ˌserənˈdɪpɪti/"></label></div>
-      <label>英文例句<textarea name="example" rows="2" placeholder="写下一句帮助记忆的例句"></textarea></label>
-      <label>例句译文<input name="translation" placeholder="可选"></label>
-      <div class="dialog-actions"><button type="button" id="cancel">取消</button><button class="primary" type="submit">保存单词</button></div>
+      <details id="manual-fields" hidden><summary>编辑已保存的内容</summary>
+        <label>中文释义<input name="meaning"></label>
+        <div class="paired"><label>美式音标<input name="us"></label><label>国际音标（IPA）<input name="ipa"></label></div>
+        <label>补充英文例句<textarea name="example" rows="2"></textarea></label>
+        <label>例句译文<input name="translation"></label>
+      </details>
+      <div class="dialog-actions"><button type="button" id="cancel">取消</button><button class="primary" id="save-entry" type="submit">保存单词</button></div>
     </form>
   </dialog>
+  <input type="file" id="pdf-files" accept=".pdf,application/pdf" multiple hidden>
   <div id="toast" role="status"></div>
 </body>
 </html>
