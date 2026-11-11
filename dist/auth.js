@@ -28,7 +28,10 @@
       script.setAttribute('data-clerk-publishable-key', publishableKey);
     });
     const clerk = window.Clerk;
-    await clerk.load({ ui: { ClerkUI: window.__internal_ClerkUICtor } });
+    const signUpUrl = '/sign-up';
+    const signUpPage = location.pathname === signUpUrl || location.pathname.startsWith(signUpUrl + '/');
+    const routes = { signInUrl: '/', signUpUrl, signInFallbackRedirectUrl: '/', signUpFallbackRedirectUrl: '/' };
+    await clerk.load({ ui: { ClerkUI: window.__internal_ClerkUICtor }, ...routes });
 
     let mounted = false;
     let activeSession = null;
@@ -44,13 +47,18 @@
       }
       if (!user || !session) {
         if (!mounted) {
-          status.textContent = '登录后打开自己的词库。';
-          clerk.mountSignIn(signIn, { routing: 'hash' });
+          status.textContent = signUpPage ? '请完成 Clerk 注册验证。' : '登录后打开自己的词库。';
+          if (signUpPage) clerk.mountSignUp(signIn, { ...routes, routing: 'path', path: signUpUrl });
+          else clerk.mountSignIn(signIn, { ...routes, routing: 'hash' });
           mounted = true;
         }
         return;
       }
       activeSession = session.id;
+      if (signUpPage) {
+        location.replace('/');
+        return;
+      }
       if (mounted) clerk.unmountSignIn(signIn);
       status.textContent = '正在打开你的词库…';
       // Set once before loading any code that reads or writes personal data.

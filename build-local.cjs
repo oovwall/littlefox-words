@@ -8,7 +8,8 @@ let html = read('index.html').replace(
   '<link rel="stylesheet" href="style.css">',
   () => '<style>\n' + read('style.css') + '\n</style>'
 );
-html = html.replace(' data-auth="required"', '').replace('  <script src="auth.js" defer></script>\n', '');
+html = html.replace(' data-auth="required"', '').replace('  <base href="/">\n', '')
+  .replace('  <script src="auth.js" defer></script>\n', '');
 for (const file of ['learning.js', 'app.js']) {
   const source = read(file);
   new vm.Script(source, { filename: file });
