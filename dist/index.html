@@ -1,15 +1,22 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-auth="required">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="description" content="用色彩记录熟悉度的英语生词本">
   <title>词块 · 英语生词本</title>
   <link rel="stylesheet" href="style.css">
-  <script src="learning.js" defer></script>
-  <script src="app.js" defer></script>
+  <script src="auth.js" defer></script>
 </head>
 <body>
+  <section class="auth-gate" aria-labelledby="auth-title">
+    <div class="auth-panel">
+      <span class="logo" aria-hidden="true">▦</span>
+      <h1 id="auth-title">登录词块</h1>
+      <p id="auth-status" class="muted" role="status">正在检查登录状态…</p>
+      <div id="clerk-sign-in"></div>
+    </div>
+  </section>
   <aside class="sidebar">
     <a class="brand" href="#words"><span class="logo" aria-hidden="true">▦</span><span>词块<small>WORD BLOCKS</small></span></a>
     <nav aria-label="主导航">
@@ -20,7 +27,7 @@
     <div class="sidebar-foot"><i></i> 保存在此浏览器</div>
   </aside>
   <main>
-    <header class="top"><span id="breadcrumb">我的词库 / 单词本</span><button class="primary" id="add"><span aria-hidden="true">＋</span> 添加单词</button></header>
+    <header class="top"><span id="breadcrumb">我的词库 / 单词本</span><div class="top-actions"><button class="primary" id="add"><span aria-hidden="true">＋</span> 添加单词</button><div id="clerk-account"></div></div></header>
     <div id="view"></div>
   </main>
   <dialog id="editor">

@@ -3,7 +3,7 @@ const view = $('#view');
 const editor = $('#editor');
 const form = $('#entry');
 const fields = form.elements;
-const key = 'word-blocks.entries.v1';
+const key = 'word-blocks.entries.v1' + (window.wordBlocksAccount ? ':' + window.wordBlocksAccount : '');
 const levels = ['生疏', '有印象', '较熟悉', '已记住'];
 const scopes = { all: '全部', day: '按天', month: '按月', year: '按年' };
 const pad = (value) => String(value).padStart(2, '0');

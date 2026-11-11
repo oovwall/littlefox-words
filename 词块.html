@@ -22,6 +22,7 @@ dialog{border:1px solid var(--line);border-radius:20px;padding:22px;width:min(52
 .text-link{font-size:12px;color:var(--accent)}.form-note{font-size:12px;line-height:1.7}.example{padding:16px 0;border-bottom:1px solid var(--line)}.example:last-child{border-bottom:0;padding-bottom:0}.example-line{display:flex;gap:14px;align-items:start}.example-line p{flex:1;line-height:1.7}.speaker{flex-shrink:0;font-size:17px;padding:5px 9px;background:#f5f0fc}.example-source{display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--muted);margin-top:8px;overflow-wrap:anywhere}.library-intro{margin-top:7px;font-size:14px}.library-metrics{margin:20px 0 12px}.pdf-list{margin-top:18px;display:grid;gap:12px}.pdf-card{display:flex;align-items:center;gap:14px}.pdf-card h2{margin-bottom:5px;font-size:16px;overflow-wrap:anywhere}.pdf-icon{padding:16px 10px;background:#eee5fa;color:var(--accent);font-size:11px;font-weight:700;border-radius:10px}.pdf-info{flex:1;min-width:0}.pdf-info p{font-size:12px;margin-bottom:6px}.pdf-info small{font-size:11px}.success-message,.error-message,#import-status{font-size:13px;line-height:1.7;margin-top:10px}.error-message{color:#a24259}.success-message{color:#407458}#manual-fields{border-top:1px solid var(--line);padding-top:10px}#manual-fields summary{font-size:13px;cursor:pointer;margin-bottom:12px;color:var(--muted)}#manual-fields label{margin-top:10px}
 @media(max-width:720px){.sidebar nav{gap:0}.sidebar nav a{font-size:11px;padding:7px 5px}.sidebar nav a span{display:none}.pdf-card{gap:9px;padding:13px}.pdf-card button{font-size:11px;padding:8px}.pdf-icon{display:none}}
 .definition{white-space:pre-line;line-height:1.75}.word p{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.example-line p{overflow-wrap:anywhere}
+.auth-gate{display:none}.top-actions{display:flex;align-items:center;gap:12px}html[data-auth=required] body{display:block}html[data-auth=required] :is(.sidebar,main,dialog,#toast){display:none}.auth-gate .logo{margin:0 auto 12px}.auth-panel{text-align:center;padding:24px;width:min(100%,500px)}.auth-panel h1{margin-bottom:8px}.auth-panel p{margin-bottom:16px}#clerk-sign-in{display:grid;justify-content:center}html[data-auth=required] .auth-gate{display:grid;place-items:center;min-height:100dvh}
 
 </style>
 </head>
@@ -288,6 +289,14 @@ any associated documentation shall at all times remain with
 Princeton University and LICENSEE agrees to preserve same.  
 
 -->
+  <section class="auth-gate" aria-labelledby="auth-title">
+    <div class="auth-panel">
+      <span class="logo" aria-hidden="true">▦</span>
+      <h1 id="auth-title">登录词块</h1>
+      <p id="auth-status" class="muted" role="status">正在检查登录状态…</p>
+      <div id="clerk-sign-in"></div>
+    </div>
+  </section>
   <aside class="sidebar">
     <a class="brand" href="#words"><span class="logo" aria-hidden="true">▦</span><span>词块<small>WORD BLOCKS</small></span></a>
     <nav aria-label="主导航">
@@ -298,7 +307,7 @@ Princeton University and LICENSEE agrees to preserve same.
     <div class="sidebar-foot"><i></i> 保存在此浏览器</div>
   </aside>
   <main>
-    <header class="top"><span id="breadcrumb">我的词库 / 单词本</span><button class="primary" id="add"><span aria-hidden="true">＋</span> 添加单词</button></header>
+    <header class="top"><span id="breadcrumb">我的词库 / 单词本</span><div class="top-actions"><button class="primary" id="add"><span aria-hidden="true">＋</span> 添加单词</button><div id="clerk-account"></div></div></header>
     <div id="view"></div>
   </main>
   <dialog id="editor">
@@ -519,9 +528,10 @@ globalThis.Learning = (() => {
   }
 
   let database;
+  const databaseName = 'word-blocks.pdf-library' + (globalThis.wordBlocksAccount ? ':' + globalThis.wordBlocksAccount : '');
   function openDatabase() {
     database ??= new Promise((resolve, reject) => {
-      const request = indexedDB.open('word-blocks.pdf-library', 1);
+      const request = indexedDB.open(databaseName, 1);
       request.onupgradeneeded = () => request.result.createObjectStore('documents', { keyPath: 'id' });
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(new Error('无法打开 PDF 例句库，请检查浏览器存储权限。'));
@@ -708,7 +718,7 @@ const view = $('#view');
 const editor = $('#editor');
 const form = $('#entry');
 const fields = form.elements;
-const key = 'word-blocks.entries.v1';
+const key = 'word-blocks.entries.v1' + (window.wordBlocksAccount ? ':' + window.wordBlocksAccount : '');
 const levels = ['生疏', '有印象', '较熟悉', '已记住'];
 const scopes = { all: '全部', day: '按天', month: '按月', year: '按年' };
 const pad = (value) => String(value).padStart(2, '0');

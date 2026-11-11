@@ -198,9 +198,10 @@ globalThis.Learning = (() => {
   }
 
   let database;
+  const databaseName = 'word-blocks.pdf-library' + (globalThis.wordBlocksAccount ? ':' + globalThis.wordBlocksAccount : '');
   function openDatabase() {
     database ??= new Promise((resolve, reject) => {
-      const request = indexedDB.open('word-blocks.pdf-library', 1);
+      const request = indexedDB.open(databaseName, 1);
       request.onupgradeneeded = () => request.result.createObjectStore('documents', { keyPath: 'id' });
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(new Error('无法打开 PDF 例句库，请检查浏览器存储权限。'));
