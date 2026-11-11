@@ -1508,7 +1508,20 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
+let pronunciationDestination;
 view.addEventListener('click', async (event) => {
+  const wordLink = event.target.closest('a[href^="#word/"]');
+  if (wordLink && !event.defaultPrevented && event.button === 0
+    && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey) {
+    const destination = wordLink.hash;
+    const entry = [...words, ...samples].find((word) => '#word/' + encodeURIComponent(word.id) === destination);
+    if (entry && destination !== location.hash) {
+      pronunciationDestination = destination;
+      // Start playback while the browser still has the click's user activation.
+      Learning.speak(entry.word, 'us', entry.usAudio).catch(() => {});
+    }
+    return;
+  }
   const button = event.target.closest('button');
   if (!button) return;
   if (/^#(?:review|lesson)(?:\/|$)/.test(location.hash)) {
@@ -1572,7 +1585,8 @@ view.addEventListener('click', async (event) => {
 
 window.addEventListener('hashchange', () => {
   reviewSession = undefined;
-  Learning.stopSpeech();
+  if (location.hash !== pronunciationDestination) Learning.stopSpeech();
+  pronunciationDestination = undefined;
   render();
   window.scrollTo(0, 0);
 });
