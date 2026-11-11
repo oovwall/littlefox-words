@@ -60,6 +60,7 @@ let importResults = [];
 let formSession = 0;
 let saving = false;
 const pendingLookups = new Set();
+let pronunciationDestination;
 let reviewSession;
 let guestRecords;
 let importingGuest = false;
@@ -701,6 +702,8 @@ form.addEventListener('submit', async (event) => {
       lookupController = controller;
       // Preserve the date when the user submits, including a lookup crossing midnight.
       entry = { id: crypto.randomUUID(), word: wordText, added: ago(0), level: 0 };
+      // Play directly from the submit gesture, before dictionary or cloud requests.
+      Learning.speak(entry.word, 'us').catch(() => {});
       await libraryLoad;
       const data = await Learning.lookup(wordText, controller.signal, matchesFor(entry).length > 0);
       if (session !== formSession || !editor.open) return;
@@ -723,6 +726,7 @@ form.addEventListener('submit', async (event) => {
       return;
     }
     editor.close();
+    if (!previous) pronunciationDestination = '#word/' + entry.id;
     location.hash = '#word/' + entry.id;
     render();
     toast(previous ? '已保存修改' : entry.lookupMissing.length
@@ -742,7 +746,6 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
-let pronunciationDestination;
 view.addEventListener('click', async (event) => {
   const wordLink = event.target.closest('a[href^="#word/"]');
   if (wordLink && !event.defaultPrevented && event.button === 0
