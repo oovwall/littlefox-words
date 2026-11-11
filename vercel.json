@@ -4,6 +4,7 @@
   "buildCommand": "node build-vercel.cjs",
   "outputDirectory": "dist",
   "rewrites": [
+    { "source": "/sign-in/:path*", "destination": "/index.html" },
     { "source": "/sign-up/:path*", "destination": "/index.html" }
   ]
 }

@@ -22,13 +22,15 @@
     <a class="brand" href="#words"><span class="logo" aria-hidden="true">▦</span><span>词块<small>WORD BLOCKS</small></span></a>
     <nav aria-label="主导航">
       <a href="#words" data-page="words"><span aria-hidden="true">▦</span> 单词本</a>
+      <a href="#review" data-page="review"><span aria-hidden="true">◇</span> 今日复习</a>
       <a href="#stats" data-page="stats"><span aria-hidden="true">▥</span> 学习统计</a>
       <a href="#library" data-page="library"><span aria-hidden="true">▤</span> PDF 例句库</a>
     </nav>
     <div class="sidebar-foot"><i></i> <span id="storage-label">保存在此浏览器</span></div>
   </aside>
   <main>
-    <header class="top"><span id="breadcrumb">我的词库 / 单词本</span><div class="top-actions"><button class="primary" id="add"><span aria-hidden="true">＋</span> 添加单词</button><div id="clerk-account"></div></div></header>
+    <header class="top"><span id="breadcrumb">我的词库 / 单词本</span><div class="top-actions"><button class="primary" id="add"><span aria-hidden="true">＋</span> 添加单词</button><a class="text-link" id="guest-login" href="/sign-in" hidden>登录并同步</a><div id="clerk-account"></div></div></header>
+    <div id="sync-controls" class="sync-controls" hidden><span id="sync-status" role="status"></span><button id="retry-sync" hidden>重试</button><button id="import-guest" hidden>同步本机体验记录</button></div>
     <div id="view"></div>
   </main>
   <dialog id="editor">
@@ -36,6 +38,7 @@
       <div class="dialog-head"><h2 id="editor-title">添加单词</h2><button type="button" class="icon" id="close" aria-label="关闭">×</button></div>
       <label>英文单词 <span class="required">*</span><input name="word" required maxlength="60" placeholder="例如 adventure" autocomplete="off" spellcheck="false"></label>
       <p class="muted form-note" id="auto-note">保存时自动补充音标、中文释义和例句，并匹配 PDF 例句库。</p>
+      <label id="keep-adding-option"><input type="checkbox" id="keep-adding" checked> 连续添加</label>
       <p id="form-status" role="status"></p>
       <details id="manual-fields" hidden><summary>编辑已保存的内容</summary>
         <label>中文释义<input name="meaning"></label>

@@ -3,6 +3,12 @@
   const signIn = document.getElementById('clerk-sign-in');
   const account = document.getElementById('clerk-account');
   const root = document.documentElement;
+  const signUpUrl = '/sign-up';
+  const signInUrl = '/sign-in';
+  const onRoute = (path) => location.pathname === path || location.pathname.startsWith(path + '/');
+  const signUpPage = onRoute(signUpUrl);
+  const authPage = signUpPage || onRoute(signInUrl);
+  let guestStarted = false;
   const loadScript = (src, configure) => new Promise((resolve, reject) => {
     const script = document.createElement('script');
     script.src = src;
@@ -12,6 +18,15 @@
     script.onerror = () => reject(new Error('无法加载登录或词库组件，请检查网络后刷新。'));
     document.head.append(script);
   });
+  async function openGuest() {
+    if (guestStarted) return;
+    guestStarted = true;
+    await loadScript('learning.js');
+    await loadScript('review.js');
+    await loadScript('app.js');
+    document.getElementById('guest-login').hidden = false;
+    root.dataset.auth = 'ready';
+  }
 
   async function start() {
     const response = await fetch('clerk-config.json', { cache: 'no-store' });
@@ -28,9 +43,7 @@
       script.setAttribute('data-clerk-publishable-key', publishableKey);
     });
     const clerk = window.Clerk;
-    const signUpUrl = '/sign-up';
-    const signUpPage = location.pathname === signUpUrl || location.pathname.startsWith(signUpUrl + '/');
-    const routes = { signInUrl: '/', signUpUrl, signInFallbackRedirectUrl: '/', signUpFallbackRedirectUrl: '/' };
+    const routes = { signInUrl, signUpUrl, signInFallbackRedirectUrl: '/', signUpFallbackRedirectUrl: '/' };
     await clerk.load({ ui: { ClerkUI: window.__internal_ClerkUICtor }, ...routes });
 
     let mounted = false;
@@ -46,16 +59,20 @@
         return;
       }
       if (!user || !session) {
+        if (!authPage) {
+          await openGuest();
+          return;
+        }
         if (!mounted) {
           status.textContent = signUpPage ? '请完成 Clerk 注册验证。' : '登录后打开自己的词库。';
           if (signUpPage) clerk.mountSignUp(signIn, { ...routes, routing: 'path', path: signUpUrl });
-          else clerk.mountSignIn(signIn, { ...routes, routing: 'hash' });
+          else clerk.mountSignIn(signIn, { ...routes, routing: 'path', path: signInUrl });
           mounted = true;
         }
         return;
       }
       activeSession = session.id;
-      if (signUpPage) {
+      if (authPage || guestStarted) {
         location.replace('/');
         return;
       }
@@ -64,6 +81,7 @@
       // Set once before loading any code that reads or writes personal data.
       Object.defineProperty(window, 'wordBlocksAccount', { value: user.id });
       await loadScript('learning.js');
+      await loadScript('review.js');
       if (cloudSync) await loadScript('cloud.js');
       await loadScript('app.js');
       if (clerk.session?.id !== activeSession) return;
@@ -75,5 +93,10 @@
     await update({ user: clerk.user, session: clerk.session });
   }
 
-  start().catch((error) => { status.textContent = error.message || '登录初始化失败，请刷新重试。'; });
+  start().catch(async (error) => {
+    if (!authPage && !window.wordBlocksAccount) {
+      try { await openGuest(); return; } catch { /* Show the loading error below. */ }
+    }
+    status.textContent = error.message || '登录初始化失败，请刷新重试。';
+  });
 })();

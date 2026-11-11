@@ -10,7 +10,7 @@ let html = read('index.html').replace(
 );
 html = html.replace(' data-auth="required"', '').replace('  <base href="/">\n', '')
   .replace('  <script src="auth.js" defer></script>\n', '');
-for (const file of ['learning.js', 'app.js']) {
+for (const file of ['learning.js', 'review.js', 'app.js']) {
   const source = read(file);
   new vm.Script(source, { filename: file });
   html = html.replace('  <script src="' + file + '" defer></script>\n', '');

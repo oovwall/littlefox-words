@@ -2,12 +2,12 @@
   const session = Clerk.session;
   const partSize = 1024 * 1024;
 
-  async function request(params, body) {
+  async function request(params, body, method = body ? 'PUT' : 'GET') {
     if (Clerk.session?.id !== session.id) throw new Error('账号已切换，请重新打开词库。');
     const token = await session.getToken();
     if (!token || Clerk.session?.id !== session.id) throw new Error('登录已失效，请重新登录。');
     const response = await fetch('/api/library?' + new URLSearchParams(params), {
-      method: body ? 'PUT' : 'GET',
+      method,
       headers: { Authorization: 'Bearer ' + token, ...(body ? { 'Content-Type': 'application/json' } : {}) },
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(30000)
@@ -33,7 +33,7 @@
     return request({}, { kind: 'word', data, revision, importOnly });
   }
 
-  async function uploadPdf(pdf) {
+  async function uploadPdf(pdf, importOnly = false) {
     const { file, ...metadata } = pdf;
     const parts = Math.ceil(file.size / partSize);
     if (parts < 1 || parts > 50) throw new Error('同步的 PDF 必须小于或等于 50 MiB。');
@@ -44,7 +44,7 @@
       const base64 = bytes.toBase64 ? bytes.toBase64() : btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join(''));
       await request({}, { kind: 'part', key: pdf.id + '.' + index, data: base64 });
     }
-    await request({}, { kind: 'pdf', data });
+    await request({}, { kind: 'pdf', data, importOnly });
     return data;
   }
 
@@ -57,5 +57,6 @@
     return new Blob(parts, { type: 'application/pdf' });
   }
 
-  window.WordBlocksCloud = { list, saveWord, uploadPdf, downloadPdf };
+  const deletePdf = (id) => request({ key: id }, undefined, 'DELETE');
+  window.WordBlocksCloud = { list, saveWord, uploadPdf, downloadPdf, deletePdf };
 })();

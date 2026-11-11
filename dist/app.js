@@ -60,11 +60,55 @@ let importResults = [];
 let formSession = 0;
 let saving = false;
 const pendingLookups = new Set();
+let reviewSession;
+let guestRecords;
+let importingGuest = false;
 
 let cloudReady = !cloud;
 let cloudVersion = 0;
 let refreshing = false;
 let writes = 0;
+function syncStatus(message, retry = false) {
+  if (!cloud) return;
+  $('#sync-controls').hidden = false;
+  $('#sync-status').textContent = message;
+  $('#retry-sync').hidden = !retry;
+}
+
+async function importGuestRecords() {
+  if (!guestRecords || importingGuest || !cloudReady) return;
+  importingGuest = true;
+  $('#import-guest').disabled = true;
+  syncStatus('正在同步本机体验记录…');
+  writes++;
+  cloudVersion++;
+  let failed = false;
+  try {
+    const existing = new Set((await cloud.list('pdf')).map((pdf) => pdf.id));
+    for (const word of guestRecords.words) await cloud.saveWord(word, 0, true);
+    for (const pdf of guestRecords.pdfs) {
+      if (!existing.has(pdf.id)) await cloud.uploadPdf(pdf, true);
+    }
+  } catch {
+    failed = true;
+  } finally {
+    writes--;
+    importingGuest = false;
+    $('#import-guest').disabled = false;
+  }
+  try {
+    await refreshCloud();
+  } catch {
+    failed = true;
+  }
+  if (failed) {
+    syncStatus('部分记录尚未同步，可以重新同步本机记录。');
+  } else {
+    $('#import-guest').hidden = true;
+    syncStatus('本机体验记录已同步');
+  }
+}
+
 async function refreshCloud() {
   if (refreshing || writes) return;
   refreshing = true;
@@ -73,9 +117,10 @@ async function refreshCloud() {
     const [remoteWords, remotePdfs] = await Promise.all([cloud.list('word'), cloud.list('pdf')]);
     if (version !== cloudVersion || writes) return;
     words = remoteWords;
-    pdfDocuments = remotePdfs;
+    pdfDocuments = remotePdfs.filter((pdf) => !pdf.deleted);
     cloudReady = true;
     libraryError = '';
+    syncStatus('已同步');
     if (!editor.open && !importBusy) render();
   } finally {
     refreshing = false;
@@ -99,13 +144,23 @@ const libraryLoad = (async () => {
     await cloud.saveWord(word, 0, true).catch(() => failures.push(word.word));
   }
   for (const pdf of documents.filter((item) => !knownPdfs.has(item.id))) {
-    await cloud.uploadPdf(pdf).catch(() => failures.push(pdf.name));
+    await cloud.uploadPdf(pdf, true).catch(() => failures.push(pdf.name));
   }
   await refreshCloud();
+  const guestWords = JSON.parse(localStorage.getItem('word-blocks.entries.v1') ?? '[]');
+  const guestPdfs = await Learning.documents(true).catch(() => []);
+  if (Array.isArray(guestWords) && (guestWords.length || guestPdfs.length)) {
+    guestRecords = { words: guestWords, pdfs: guestPdfs };
+    $('#import-guest').hidden = false;
+    if (sessionStorage.getItem('word-blocks.sync-guest') === 'yes') {
+      sessionStorage.removeItem('word-blocks.sync-guest');
+      await importGuestRecords();
+    }
+  }
   if (failures.length) toast('部分旧数据未上传，仍保存在此浏览器。刷新后可重试。');
 })().catch((error) => {
   libraryError = error.message;
-  if (cloud) toast('云端词库读取失败，请刷新重试。');
+  if (cloud) syncStatus('同步失败', true);
 }).finally(() => {
   libraryReady = true;
   if (!editor.open) render();
@@ -138,11 +193,14 @@ async function save(entry) {
     }
     writes++;
     cloudVersion++;
+    syncStatus('正在保存…');
     try {
       const saved = await cloud.saveWord(entry, entry.syncRevision ?? 0);
       words = [saved, ...words.filter((word) => word.id !== saved.id)];
+      syncStatus('已同步');
       return true;
     } catch (error) {
+      syncStatus('修改未保存，请重试本次操作');
       toast(error.message);
       return false;
     } finally {
@@ -175,6 +233,7 @@ function wordList() {
       <h1>我的单词本</h1>
       <p>按日期收录生词，用颜色标记熟悉度。</p>
       <div class="counts"><span>已收录 <b>${words.length}</b></span><span>已记住 <b>${mastered()}</b></span></div>
+      <a class="review-link" href="#review">开始今日复习 · ${words.filter((word) => WordReview.due(word, ago(0))).length} 词 →</a>
     </section>
     <section class="section">
       <div class="toolbar">
@@ -295,7 +354,9 @@ function showLibrary() {
       return `<section class="panel pdf-card"><div class="pdf-icon" aria-hidden="true">PDF</div>
         <div class="pdf-info"><h2>${safe(pdf.name)}</h2><p class="muted">${pdf.pageCount} 页 · ${pdf.examples.length} 条例句 · 匹配 ${count} 个生词</p>
         <small class="muted">上传于 ${safe(pdf.added.slice(0, 10))}</small></div>
-        <button data-open-pdf="${safe(pdf.id)}">查看 PDF</button></section>`;
+        <div class="pdf-actions"><a class="text-link" href="#lesson/${safe(pdf.id)}">学习本集</a>
+        <button data-open-pdf="${safe(pdf.id)}">查看 PDF</button>
+        <button class="danger" data-delete-pdf="${safe(pdf.id)}" ${importBusy ? 'disabled' : ''}>删除</button></div></section>`;
     }).join('') : '<div class="empty">上传第一份 PDF，开始收集 Little Fox 例句。</div>'}</div>
   </article>`;
 }
@@ -316,8 +377,8 @@ async function importPdfs(files) {
         const pdf = await Learning.parsePdf(file, (page, total) => {
           importStatus = `正在解析 ${file.name} · 第 ${page} / ${total} 页`;
           if (location.hash === '#library') $('#import-status').textContent = importStatus;
-        });
-        if (pdfDocuments.some((item) => item.id === pdf.id)) {
+        }, new Set(pdfDocuments.map((item) => item.id)));
+        if (pdf.duplicate || pdfDocuments.some((item) => item.id === pdf.id)) {
           importResults.push({ name: file.name, ok: true, message: '已在例句库中，已跳过重复文件' });
           continue;
         }
@@ -327,7 +388,14 @@ async function importPdfs(files) {
           if (location.hash === '#library') $('#import-status').textContent = importStatus;
           writes++;
           cloudVersion++;
-          try { stored = await cloud.uploadPdf(pdf); } finally { writes--; }
+          syncStatus('正在同步 PDF…');
+          try {
+            stored = await cloud.uploadPdf(pdf);
+            syncStatus('已同步');
+          } catch (error) {
+            syncStatus('PDF 未同步，请重新上传');
+            throw error;
+          } finally { writes--; }
         } else await Learning.storeDocument(pdf);
         pdfDocuments = [...pdfDocuments, stored];
         const count = words.filter((word) => matchesFor(word).some((example) =>
@@ -343,6 +411,31 @@ async function importPdfs(files) {
     importStatus = '导入完成，之后添加的生词也会自动匹配。';
     $('#pdf-files').value = '';
     render();
+  }
+}
+
+async function removePdf(id, button) {
+  const pdf = pdfDocuments.find((item) => item.id === id);
+  if (!pdf || !window.confirm('删除「' + pdf.name + '」及其关联例句？生词会保留。')) return;
+  button.disabled = true;
+  writes++;
+  cloudVersion++;
+  try {
+    syncStatus('正在删除 PDF…');
+    if (cloud) await cloud.deletePdf(id);
+    else await Learning.deleteDocument(id);
+    pdfDocuments = pdfDocuments.filter((item) => item.id !== id);
+    importResults = [];
+    importStatus = '';
+    syncStatus('已同步');
+    render();
+    toast('PDF 已删除');
+  } catch (error) {
+    syncStatus('PDF 删除失败');
+    toast(error.message);
+    button.disabled = false;
+  } finally {
+    writes--;
   }
 }
 
@@ -366,6 +459,11 @@ function showStats() {
   view.innerHTML = `<article class="stats"><h1>学习统计</h1>
     <div class="metrics"><div class="metric">录入总量<strong>${words.length}</strong></div>
     <div class="metric">已记住总量<strong>${mastered()}</strong></div></div>
+    <section class="panel"><h2>复习进度</h2><div class="review-metrics">
+      <a class="metric" href="#review/today">今天已复习<strong>${words.filter((word) => word.review?.last === ago(0)).length}</strong></a>
+      <a class="metric" href="#review/tomorrow">明天到期<strong>${words.filter((word) => word.review?.due === ago(-1)).length}</strong></a>
+      <a class="metric" href="#review/weak">反复忘记<strong>${words.filter((word) => (word.review?.lapses ?? 0) >= 2).length}</strong></a>
+    </div></section>
     <section class="panel">
       <div class="toolbar"><h2>录入与记忆趋势</h2>${segments({ day: '近 7 天', month: '近 6 月', year: '按年' }, chartScope, 'chart')}</div>
       <p class="muted">记忆量按当前已记住单词最近一次标记为「已记住」的日期统计。</p>
@@ -376,7 +474,90 @@ function showStats() {
     </section></article>`;
 }
 
+function reviewGroup() {
+  const [page, id] = location.hash.slice(1).split('/');
+  if (page === 'lesson') {
+    const pdf = pdfDocuments.find((item) => item.id === id);
+    return { pdf, title: pdf?.name ?? '学习本集',
+      items: pdf ? words.filter((word) => Learning.matchedExamples(word.word, [pdf]).length) : [] };
+  }
+  const today = ago(0);
+  if (id === 'today') return { title: '今天已复习', items: words.filter((word) => word.review?.last === today) };
+  if (id === 'tomorrow') return { title: '明天到期', items: words.filter((word) => word.review?.due === ago(-1)) };
+  if (id === 'weak') return { title: '反复忘记', items: words.filter((word) => (word.review?.lapses ?? 0) >= 2) };
+  return { title: '今日复习', items: words.filter((word) => WordReview.due(word, today))
+    .sort((a, b) => (a.review?.due ?? a.added).localeCompare(b.review?.due ?? b.added)) };
+}
+
+function showReview() {
+  const { title, items, pdf } = reviewGroup();
+  const session = reviewSession;
+  const word = session && words.find((item) => item.id === session.ids[session.index]);
+  const lessonExamples = pdf && word ? Learning.matchedExamples(word.word, [pdf]) : [];
+  const question = session?.mode === 'cloze' && word ? WordReview.cloze(word, lessonExamples) : null;
+  const example = question ?? lessonExamples[0] ?? (word && examplesFor(word)[0]);
+  const intro = `<section class="panel"><p>${session ? `本轮完成 ${session.index} 个。` : `共 ${items.length} 个生词。`}</p>
+    ${items.length ? `<div class="review-actions"><button class="primary" data-start-review="cards">开始翻卡</button>
+      ${pdf && items.some((item) => WordReview.cloze(item, Learning.matchedExamples(item.word, [pdf])))
+        ? '<button data-start-review="cloze">练习原句填空</button>' : ''}</div>` : '<p class="muted">目前没有待练习的生词。</p>'}</section>
+    ${pdf && items.length ? `<div class="grid lesson-words">${items.map((item) =>
+      `<a class="word level-${item.level}" href="#word/${safe(item.id)}"><strong>${safe(item.word)}</strong><p>${safe(item.meaning)}</p></a>`).join('')}</div>` : ''}`;
+  view.innerHTML = `<article class="stats"><a class="back" href="${pdf ? '#library' : '#words'}">← 返回</a><h1>${safe(title)}</h1>
+    ${word ? `<section class="panel review-card"><p class="muted">第 ${session.index + 1} / ${session.ids.length} 个</p>
+      <h2>${safe(question ? question.prompt : word.word)}</h2>
+      ${session.revealed ? `<p class="definition">${safe(word.meaning || '暂无中文释义')}</p>
+        ${example ? `<div class="example-line"><p>${safe(example.text)}</p><button class="speaker" data-review-audio aria-label="朗读例句">🔊</button></div>` : ''}
+        <div class="review-actions"><button data-rate="again">忘了</button><button data-rate="hard">模糊</button><button class="primary" data-rate="good">记得</button></div>`
+        : `${question ? '<label>填入缺少的单词<input class="search" id="cloze-answer" autocomplete="off"></label>' : '<p class="muted">先回想中文释义，再翻卡。</p>'}
+          <div class="review-actions"><button class="primary" data-reveal>显示答案</button></div>`}
+      ${session.feedback ? `<p role="status" class="muted">${safe(session.feedback)}</p>` : ''}
+    </section>` : intro}</article>`;
+}
+
+async function handleReview(button) {
+  if (button.dataset.startReview) {
+    const { items, pdf } = reviewGroup();
+    const mode = button.dataset.startReview;
+    const selected = mode === 'cloze' ? items.filter((word) => WordReview.cloze(word, Learning.matchedExamples(word.word, [pdf]))) : items;
+    reviewSession = { ids: selected.map((word) => word.id), index: 0, mode, revealed: false, feedback: '' };
+    showReview();
+    view.querySelector('#cloze-answer, [data-reveal]')?.focus();
+    return;
+  }
+  const session = reviewSession;
+  const word = session && words.find((item) => item.id === session.ids[session.index]);
+  if (!word) return;
+  if (button.hasAttribute('data-reveal')) {
+    const input = $('#cloze-answer');
+    session.revealed = true;
+    if (input?.value.trim()) session.feedback = WordReview.normalize(input.value) === WordReview.normalize(word.word)
+      ? '填对了。' : '正确答案是 ' + word.word + '。';
+    showReview();
+    view.querySelector('[data-rate]')?.focus();
+  } else if (button.hasAttribute('data-review-audio')) {
+    const { pdf } = reviewGroup();
+    const examples = pdf ? Learning.matchedExamples(word.word, [pdf]) : [];
+    const example = (session.mode === 'cloze' ? WordReview.cloze(word, examples) : examples[0]) ?? examplesFor(word)[0];
+    if (example) readAloud(example.text, 'us', undefined, button, true);
+  } else if (button.dataset.rate && session.revealed && !session.saving) {
+    session.saving = true;
+    for (const control of view.querySelectorAll('[data-rate]')) control.disabled = true;
+    const success = await save(WordReview.schedule(word, button.dataset.rate, ago(0), (days) => ago(-days)));
+    session.saving = false;
+    if (reviewSession !== session) return;
+    if (success) {
+      Learning.stopSpeech();
+      session.index++;
+      session.revealed = false;
+      session.feedback = '';
+    }
+    showReview();
+    view.querySelector('#cloze-answer, [data-reveal], [data-rate], [data-start-review]')?.focus();
+  }
+}
+
 function activeWord() {
+  if (!location.hash.startsWith('#word/')) return undefined;
   const id = location.hash.split('/')[1];
   return [...words, ...samples].find((word) => word.id === id);
 }
@@ -384,21 +565,24 @@ function activeWord() {
 function render() {
   const stats = location.hash === '#stats';
   const library = location.hash === '#library';
+  const reviewing = /^#(?:review|lesson)(?:\/|$)/.test(location.hash);
   const word = activeWord();
   for (const link of document.querySelectorAll('[data-page]')) {
-    const active = link.dataset.page === (stats ? 'stats' : library ? 'library' : 'words');
+    const active = link.dataset.page === (stats ? 'stats' : library ? 'library' : reviewing ? 'review' : 'words');
     link.classList.toggle('active', active);
     if (active) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   }
-  $('#breadcrumb').textContent = stats ? '我的词库 / 学习统计' : library ? '我的词库 / PDF 例句库' : '我的词库 / 单词本' + (word ? ' / 单词详情' : '');
+  $('#breadcrumb').textContent = stats ? '我的词库 / 学习统计' : library ? '我的词库 / PDF 例句库' : reviewing ? '我的词库 / 复习' : '我的词库 / 单词本' + (word ? ' / 单词详情' : '');
   if (stats) showStats();
   else if (library) showLibrary();
+  else if (reviewing) showReview();
   else if (word) showWord(word);
   else wordList();
 }
 
 function openEditor(word = null) {
+  $('#keep-adding-option').hidden = Boolean(word);
   lookupController?.abort();
   formSession++;
   saving = false;
@@ -530,6 +714,14 @@ form.addEventListener('submit', async (event) => {
     }
     if (!await save(entry)) return;
     if (session !== formSession || !editor.open) return;
+    if (!previous && $('#keep-adding').checked) {
+      fields.word.value = '';
+      fields.word.readOnly = false;
+      fields.word.focus();
+      $('#form-status').textContent = '已添加 ' + entry.word + '，可以继续输入。';
+      render();
+      return;
+    }
     editor.close();
     location.hash = '#word/' + entry.id;
     render();
@@ -553,6 +745,14 @@ form.addEventListener('submit', async (event) => {
 view.addEventListener('click', async (event) => {
   const button = event.target.closest('button');
   if (!button) return;
+  if (/^#(?:review|lesson)(?:\/|$)/.test(location.hash)) {
+    await handleReview(button);
+    return;
+  }
+  if (button.dataset.deletePdf) {
+    await removePdf(button.dataset.deletePdf, button);
+    return;
+  }
   const { scope: nextScope, chart, speak: accent, level } = button.dataset;
   if (button.hasAttribute('data-upload')) $('#pdf-files').click();
   if (button.dataset.openPdf) {
@@ -605,6 +805,7 @@ view.addEventListener('click', async (event) => {
 });
 
 window.addEventListener('hashchange', () => {
+  reviewSession = undefined;
   Learning.stopSpeech();
   render();
   window.scrollTo(0, 0);
@@ -623,9 +824,21 @@ window.addEventListener('storage', (event) => {
 });
 if (cloud) {
   $('#storage-label').textContent = '同步到云端';
+  syncStatus('正在读取云端词库…');
+  $('#import-guest').addEventListener('click', importGuestRecords);
+  $('#retry-sync').addEventListener('click', () => {
+    syncStatus('正在重试同步…');
+    refreshCloud().catch(() => syncStatus('同步失败', true));
+  });
   window.addEventListener('focus', () => {
-    if (libraryReady) refreshCloud().catch(() => toast('暂时无法刷新云端词库。'));
+    if (libraryReady) refreshCloud().catch(() => syncStatus('同步失败', true));
   });
 }
+$('#guest-login').addEventListener('click', () => {
+  try { sessionStorage.setItem('word-blocks.sync-guest', 'yes'); } catch { /* Manual import remains available. */ }
+});
+view.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && event.target.id === 'cloze-answer') view.querySelector('[data-reveal]')?.click();
+});
 render();
 if (storageIssue) toast(storageIssue);

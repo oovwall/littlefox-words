@@ -199,22 +199,31 @@ globalThis.Learning = (() => {
 
   let database;
   const databaseName = 'word-blocks.pdf-library' + (globalThis.wordBlocksAccount ? ':' + globalThis.wordBlocksAccount : '');
-  function openDatabase() {
-    database ??= new Promise((resolve, reject) => {
-      const request = indexedDB.open(databaseName, 1);
+  function connectDatabase(name) {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(name, 1);
       request.onupgradeneeded = () => request.result.createObjectStore('documents', { keyPath: 'id' });
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(new Error('无法打开 PDF 例句库，请检查浏览器存储权限。'));
     });
-    return database;
   }
-  async function documents() {
-    const db = await openDatabase();
+  const openDatabase = () => database ??= connectDatabase(databaseName);
+  async function documents(guest = false) {
+    const db = await (guest ? connectDatabase('word-blocks.pdf-library') : openDatabase());
     return new Promise((resolve, reject) => {
       const transaction = db.transaction('documents');
       const request = transaction.objectStore('documents').getAll();
-      transaction.oncomplete = () => resolve(request.result);
-      transaction.onerror = () => reject(new Error('PDF 例句库读取失败。'));
+      transaction.oncomplete = () => { if (guest) db.close(); resolve(request.result); };
+      transaction.onabort = () => { if (guest) db.close(); reject(new Error('PDF 例句库读取失败。')); };
+    });
+  }
+  async function deleteDocument(id) {
+    const db = await openDatabase();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction('documents', 'readwrite');
+      transaction.objectStore('documents').delete(id);
+      transaction.oncomplete = resolve;
+      transaction.onabort = () => reject(new Error('PDF 删除失败，请重试。'));
     });
   }
   async function storeDocument(record) {
@@ -331,10 +340,11 @@ globalThis.Learning = (() => {
     return pdfLibrary;
   }
 
-  async function parsePdf(file, onProgress) {
+  async function parsePdf(file, onProgress, knownIds = new Set()) {
     const data = await file.arrayBuffer();
     const digest = await crypto.subtle.digest('SHA-256', data);
     const id = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+    if (knownIds.has(id)) return { id, duplicate: true };
     const library = await pdfjs();
     const task = library.getDocument({ data: new Uint8Array(data), isEvalSupported: false, useSystemFonts: true });
     let pdf;
@@ -378,5 +388,5 @@ globalThis.Learning = (() => {
   }
 
   return { normalize, termKey, containsTerm, uniqueExamples, lookup, speak, stopSpeech,
-    documents, storeDocument, parsePdf, matchedExamples, textRows, extractExamples };
+    documents, storeDocument, deleteDocument, parsePdf, matchedExamples, textRows, extractExamples };
 })();

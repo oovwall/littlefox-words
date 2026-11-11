@@ -13,6 +13,7 @@ const recordKey = (word) => word.normalize('NFKC').toLowerCase().trim().replace(
 const wordTextFields = ['meaning', 'us', 'ipa', 'example', 'translation', 'usAudio', 'ukAudio', 'masteredOn'];
 const validExample = (example) => example && typeof example.text === 'string'
   && (example.translation == null || typeof example.translation === 'string');
+const lockPdf = (owner, id) => sql`SELECT pg_advisory_xact_lock(hashtextextended(${owner + ':' + id}, 0))`;
 let initialization;
 
 function initialize() {
@@ -51,7 +52,7 @@ async function read(owner, params) {
     const [row] = await sql`SELECT data FROM word_blocks_records part
       WHERE owner = ${owner} AND kind = 'part' AND key = ${key}
       AND EXISTS (SELECT 1 FROM word_blocks_records
-        WHERE owner = ${owner} AND kind = 'pdf' AND key = ${id})`;
+        WHERE owner = ${owner} AND kind = 'pdf' AND key = ${id} AND NOT (data ? 'deleted'))`;
     return row ? json(row.data) : json({ error: '文件片段不存在。' }, 404);
   }
   if (kind !== 'word' && kind !== 'pdf') return json({ error: '数据类型无效。' }, 400);
@@ -102,16 +103,18 @@ async function write(owner, request) {
       && Number.isInteger(data.pageCount) && data.pageCount > 0
       && Number.isInteger(data.parts) && data.parts >= 1 && data.parts <= 50
       && Buffer.byteLength(JSON.stringify(data)) <= 3000000) {
-    const rows = await sql`INSERT INTO word_blocks_records (owner, kind, key, data)
+    const [, rows] = await sql.transaction([lockPdf(owner, data.id), sql`INSERT INTO word_blocks_records (owner, kind, key, data)
       SELECT ${owner}, 'pdf', ${data.id}, ${JSON.stringify(data)}::jsonb
       WHERE NOT EXISTS (SELECT 1 FROM generate_series(0, ${data.parts}::integer - 1) AS position(i)
         WHERE NOT EXISTS (SELECT 1 FROM word_blocks_records WHERE owner = ${owner} AND kind = 'part'
           AND key = ${data.id} || '.' || position.i::text))
-      ON CONFLICT DO NOTHING RETURNING key`;
+      ON CONFLICT (owner, kind, key) DO UPDATE SET data = EXCLUDED.data
+      WHERE word_blocks_records.data ? 'deleted' AND NOT ${importOnly === true}::boolean RETURNING key`]);
     if (rows.length) return json({ saved: true });
-    const [existing] = await sql`SELECT key FROM word_blocks_records WHERE owner = ${owner}
+    const [existing] = await sql`SELECT data FROM word_blocks_records WHERE owner = ${owner}
       AND kind = 'pdf' AND key = ${data.id}`;
-    return existing ? json({ saved: true }) : json({ error: '文件上传未完成，请重试。' }, 409);
+    return existing && !existing.data.deleted ? json({ saved: true })
+      : json({ error: '文件上传未完成或已删除，请重新导入。' }, 409);
   }
   return json({ error: '同步数据无效或过大。' }, 400);
 }
@@ -120,9 +123,20 @@ async function handler(request) {
   const owner = await ownerOf(request);
   if (!owner) return json({ error: '登录已失效，请重新登录。' }, 401);
   if (!sql) return json({ error: '云端词库尚未配置。' }, 503);
-  if (request.method !== 'GET' && request.method !== 'PUT') return json({ error: '不支持此操作。' }, 405);
+  if (!['GET', 'PUT', 'DELETE'].includes(request.method)) return json({ error: '不支持此操作。' }, 405);
   try {
     await initialize();
+    if (request.method === 'DELETE') {
+      const id = new URL(request.url).searchParams.get('key') ?? '';
+      if (!pdfId.test(id)) return json({ error: 'PDF 无效。' }, 400);
+      await sql.transaction([
+        lockPdf(owner, id),
+        sql`UPDATE word_blocks_records SET data = ${JSON.stringify({id, deleted: true})}::jsonb
+          WHERE owner = ${owner} AND kind = 'pdf' AND key = ${id}`,
+        sql`DELETE FROM word_blocks_records WHERE owner = ${owner} AND kind = 'part' AND key LIKE ${id + '.%'}`
+      ]);
+      return json({ deleted: true });
+    }
     return request.method === 'GET' ? await read(owner, new URL(request.url).searchParams) : await write(owner, request);
   } catch (error) {
     if (error instanceof SyntaxError) return json({ error: '请求格式无效。' }, 400);
