@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="用色彩记录熟悉度的英语生词本">
+  <title>词块 · 英语生词本</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#words"><span class="logo" aria-hidden="true">▦</span><span>词块<small>WORD BLOCKS</small></span></a>
+    <nav aria-label="主导航">
+      <a href="#words" data-page="words"><span aria-hidden="true">▦</span> 单词本</a>
+      <a href="#stats" data-page="stats"><span aria-hidden="true">▥</span> 学习统计</a>
+    </nav>
+    <div class="sidebar-foot"><i></i> 保存在此浏览器</div>
+  </aside>
+  <main>
+    <header class="top"><span id="breadcrumb">我的词库 / 单词本</span><button class="primary" id="add"><span aria-hidden="true">＋</span> 添加单词</button></header>
+    <div id="view"></div>
+  </main>
+  <dialog id="editor">
+    <form id="entry">
+      <div class="dialog-head"><h2 id="editor-title">添加单词</h2><button type="button" class="icon" id="close" aria-label="关闭">×</button></div>
+      <label>英文单词 <span class="required">*</span><div class="lookup"><input name="word" required maxlength="60" placeholder="例如 serendipity"><button type="button" id="lookup">查词</button></div></label>
+      <p id="form-status" role="status"></p>
+      <label>中文释义<input name="meaning" placeholder="例如 意外发现美好事物的运气"></label>
+      <div class="paired"><label>美式音标<input name="us" placeholder="/ˌserənˈdɪpəti/"></label><label>国际音标（IPA）<input name="ipa" placeholder="/ˌserənˈdɪpɪti/"></label></div>
+      <label>英文例句<textarea name="example" rows="2" placeholder="写下一句帮助记忆的例句"></textarea></label>
+      <label>例句译文<input name="translation" placeholder="可选"></label>
+      <div class="dialog-actions"><button type="button" id="cancel">取消</button><button class="primary" type="submit">保存单词</button></div>
+    </form>
+  </dialog>
+  <div id="toast" role="status"></div>
+</body>
+</html>
