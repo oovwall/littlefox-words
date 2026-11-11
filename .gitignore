@@ -1,3 +1,4 @@
 .vercel/
 .env*
 dist/clerk-config.json
+node_modules/

@@ -16,7 +16,7 @@
   async function start() {
     const response = await fetch('clerk-config.json', { cache: 'no-store' });
     if (!response.ok) throw new Error('网页版尚未配置 Clerk 登录。');
-    const { publishableKey } = await response.json();
+    const { publishableKey, cloudSync } = await response.json();
     if (!/^pk_(test|live)_[A-Za-z0-9+/=]+$/.test(publishableKey ?? '')) {
       throw new Error('网页版尚未配置有效的 Clerk 登录。');
     }
@@ -56,6 +56,7 @@
       // Set once before loading any code that reads or writes personal data.
       Object.defineProperty(window, 'wordBlocksAccount', { value: user.id });
       await loadScript('learning.js');
+      if (cloudSync) await loadScript('cloud.js');
       await loadScript('app.js');
       if (clerk.session?.id !== activeSession) return;
       clerk.mountUserButton(account);

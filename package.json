@@ -1,0 +1,10 @@
+{
+  "name": "littlefox-words",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "24.x" },
+  "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
+    "jose": "^6.1.3"
+  }
+}

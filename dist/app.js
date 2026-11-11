@@ -4,6 +4,7 @@ const editor = $('#editor');
 const form = $('#entry');
 const fields = form.elements;
 const key = 'word-blocks.entries.v1' + (window.wordBlocksAccount ? ':' + window.wordBlocksAccount : '');
+const cloud = window.WordBlocksCloud;
 const levels = ['生疏', '有印象', '较熟悉', '已记住'];
 const scopes = { all: '全部', day: '按天', month: '按月', year: '按年' };
 const pad = (value) => String(value).padStart(2, '0');
@@ -60,10 +61,51 @@ let formSession = 0;
 let saving = false;
 const pendingLookups = new Set();
 
-const libraryLoad = Learning.documents().then((documents) => {
-  pdfDocuments = documents;
-}).catch((error) => {
+let cloudReady = !cloud;
+let cloudVersion = 0;
+let refreshing = false;
+let writes = 0;
+async function refreshCloud() {
+  if (refreshing || writes) return;
+  refreshing = true;
+  const version = cloudVersion;
+  try {
+    const [remoteWords, remotePdfs] = await Promise.all([cloud.list('word'), cloud.list('pdf')]);
+    if (version !== cloudVersion || writes) return;
+    words = remoteWords;
+    pdfDocuments = remotePdfs;
+    cloudReady = true;
+    libraryError = '';
+    if (!editor.open && !importBusy) render();
+  } finally {
+    refreshing = false;
+  }
+}
+
+const libraryLoad = (async () => {
+  const documents = await Learning.documents().catch((error) => {
+    if (!cloud) throw error;
+    return [];
+  });
+  if (!cloud) {
+    pdfDocuments = documents;
+    return;
+  }
+  const [remoteWords, remotePdfs] = await Promise.all([cloud.list('word'), cloud.list('pdf')]);
+  const knownWords = new Set(remoteWords.map((word) => Learning.termKey(word.word)));
+  const knownPdfs = new Set(remotePdfs.map((pdf) => pdf.id));
+  const failures = [];
+  for (const word of words.filter((item) => !knownWords.has(Learning.termKey(item.word)))) {
+    await cloud.saveWord(word, 0, true).catch(() => failures.push(word.word));
+  }
+  for (const pdf of documents.filter((item) => !knownPdfs.has(item.id))) {
+    await cloud.uploadPdf(pdf).catch(() => failures.push(pdf.name));
+  }
+  await refreshCloud();
+  if (failures.length) toast('部分旧数据未上传，仍保存在此浏览器。刷新后可重试。');
+})().catch((error) => {
   libraryError = error.message;
+  if (cloud) toast('云端词库读取失败，请刷新重试。');
 }).finally(() => {
   libraryReady = true;
   if (!editor.open) render();
@@ -88,7 +130,26 @@ function toast(message) {
   toastTimer = setTimeout(() => { $('#toast').textContent = ''; }, 3600);
 }
 
-function save(nextWords) {
+async function save(entry) {
+  if (cloud) {
+    if (!cloudReady) {
+      toast('云端词库尚未加载，请稍后重试。');
+      return false;
+    }
+    writes++;
+    cloudVersion++;
+    try {
+      const saved = await cloud.saveWord(entry, entry.syncRevision ?? 0);
+      words = [saved, ...words.filter((word) => word.id !== saved.id)];
+      return true;
+    } catch (error) {
+      toast(error.message);
+      return false;
+    } finally {
+      writes--;
+    }
+  }
+  const nextWords = [entry, ...words.filter((word) => word.id !== entry.id)];
   if (storageIssue) {
     toast(storageIssue);
     return false;
@@ -198,7 +259,7 @@ function showWord(word) {
         <div class="example-line"><p>${safe(example.text)}</p><button data-sentence="${index}" class="speaker" aria-label="朗读例句 ${index + 1}" title="朗读例句">🔊</button></div>
         ${example.translation ? `<p class="muted">${safe(example.translation)}</p>` : ''}
         <div class="example-source">${example.sources?.length ? example.sources.map((source) =>
-          `<span>Little Fox · ${safe(source.name)} · 第 ${source.page} 页</span>`).join('') : safe(example.source || '我的例句')}</div>
+          `<span>Little Fox · ${safe(source.name)} · 第 ${safe(source.page)} 页</span>`).join('') : safe(example.source || '我的例句')}</div>
       </div>`).join('') : `<p class="muted">${libraryReady ? '暂未找到例句，可以上传 Little Fox 单词 PDF 自动匹配。' : '正在读取 PDF 例句库…'}</p>`}
     </section>
     ${!word.sample && missing.length ? `<section class="panel toolbar"><p class="muted">待补充${safe(missing.join('、'))}。</p><button data-refresh>自动补充</button></section>` : ''}
@@ -224,7 +285,7 @@ function showLibrary() {
       <div class="metric">PDF 文件<strong>${pdfDocuments.length}</strong></div>
       <div class="metric">已匹配的生词<strong>${matched}</strong></div>
     </div>
-    <p class="muted form-note">PDF 在本机解析并保存。支持多选，可提取文字的 PDF 会自动识别完整英文例句。</p>
+    <p class="muted form-note">${cloud ? 'PDF 和提取出的例句会同步到账号。' : 'PDF 在本机解析并保存。'}支持多选，可提取文字的 PDF 会自动识别完整英文例句。</p>
     ${libraryError ? `<p class="error-message" role="alert">${safe(libraryError)}</p>` : ''}
     <p id="import-status" role="status">${safe(importStatus || (!libraryReady ? '正在读取例句库…' : ''))}</p>
     <div id="import-results">${importResults.map((result) =>
@@ -260,8 +321,15 @@ async function importPdfs(files) {
           importResults.push({ name: file.name, ok: true, message: '已在例句库中，已跳过重复文件' });
           continue;
         }
-        await Learning.storeDocument(pdf);
-        pdfDocuments = [...pdfDocuments, pdf];
+        let stored = pdf;
+        if (cloud) {
+          importStatus = '正在同步 ' + file.name;
+          if (location.hash === '#library') $('#import-status').textContent = importStatus;
+          writes++;
+          cloudVersion++;
+          try { stored = await cloud.uploadPdf(pdf); } finally { writes--; }
+        } else await Learning.storeDocument(pdf);
+        pdfDocuments = [...pdfDocuments, stored];
         const count = words.filter((word) => matchesFor(word).some((example) =>
           example.sources.some((source) => source.documentId === pdf.id))).length;
         importResults.push({ name: file.name, ok: true, message: `已导入 ${pdf.examples.length} 条例句，匹配 ${count} 个生词` });
@@ -374,7 +442,7 @@ async function refreshWord(word, button) {
     const data = await Learning.lookup(word.word, undefined, matchesFor(word).length > 0);
     const current = words.find((item) => item.id === word.id);
     if (!current) return;
-    if (!save(words.map((item) => item.id === word.id ? mergeLookup(current, data) : item))) return;
+    if (!await save(mergeLookup(current, data))) return;
     render();
     toast(data.lookupMissing.length ? '已补充查到的内容，部分数据暂时不可用。' : '已自动补充单词信息');
   } catch (error) {
@@ -437,7 +505,7 @@ form.addEventListener('submit', async (event) => {
   let entry;
   try {
     if (previous) {
-      entry = { ...previous };
+      entry = { ...previous, syncRevision: editing.syncRevision };
       for (const field of ['meaning', 'us', 'ipa', 'example', 'translation']) {
         entry[field] = fields[field].value.trim();
       }
@@ -460,8 +528,8 @@ form.addEventListener('submit', async (event) => {
       $('#form-status').textContent = '这个单词已在词库中。';
       return;
     }
-    const next = previous ? words.map((word) => word.id === entry.id ? entry : word) : [entry, ...words];
-    if (!save(next)) return;
+    if (!await save(entry)) return;
+    if (session !== formSession || !editor.open) return;
     editor.close();
     location.hash = '#word/' + entry.id;
     render();
@@ -482,17 +550,29 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
-view.addEventListener('click', (event) => {
+view.addEventListener('click', async (event) => {
   const button = event.target.closest('button');
   if (!button) return;
   const { scope: nextScope, chart, speak: accent, level } = button.dataset;
   if (button.hasAttribute('data-upload')) $('#pdf-files').click();
   if (button.dataset.openPdf) {
     const pdf = pdfDocuments.find((item) => item.id === button.dataset.openPdf);
-    if (pdf?.file) {
-      const url = URL.createObjectURL(pdf.file);
-      window.open(url, '_blank', 'noopener');
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    if (pdf) {
+      const popup = window.open('about:blank', '_blank');
+      if (!popup) { toast('浏览器阻止了 PDF 窗口。'); return; }
+      popup.opener = null;
+      button.disabled = true;
+      try {
+        const file = pdf.file ?? await cloud.downloadPdf(pdf);
+        const url = URL.createObjectURL(file);
+        popup.location.replace(url);
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      } catch (error) {
+        popup.close();
+        toast(error.message);
+      } finally {
+        button.disabled = false;
+      }
     }
   }
   if (nextScope) {
@@ -517,7 +597,7 @@ view.addEventListener('click', (event) => {
   if (button.hasAttribute('data-edit')) openEditor(word);
   if (level !== undefined && word.level !== Number(level)) {
     const updated = { ...word, level: Number(level), masteredOn: level === '3' ? ago(0) : undefined };
-    if (save(words.map((item) => item.id === word.id ? updated : item))) {
+    if (await save(updated) && activeWord()?.id === word.id) {
       showWord(updated);
       view.querySelector('[data-level][aria-pressed="true"]').focus();
     }
@@ -530,7 +610,7 @@ window.addEventListener('hashchange', () => {
   window.scrollTo(0, 0);
 });
 window.addEventListener('storage', (event) => {
-  if (event.key !== key) return;
+  if (cloud || event.key !== key) return;
   try {
     const next = JSON.parse(event.newValue ?? '[]');
     if (Array.isArray(next)) {
@@ -541,5 +621,11 @@ window.addEventListener('storage', (event) => {
     toast('无法读取其他页面保存的词库。');
   }
 });
+if (cloud) {
+  $('#storage-label').textContent = '同步到云端';
+  window.addEventListener('focus', () => {
+    if (libraryReady) refreshCloud().catch(() => toast('暂时无法刷新云端词库。'));
+  });
+}
 render();
 if (storageIssue) toast(storageIssue);
