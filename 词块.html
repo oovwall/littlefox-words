@@ -1047,7 +1047,8 @@ function showGrid() {
   const term = query.trim().toLowerCase();
   const visible = (words.length ? words : samples).filter(({ word, meaning, added }) =>
     added.startsWith(prefix) && (word.toLowerCase().includes(term) || (meaning ?? '').toLowerCase().includes(term))
-  ).sort((a, b) => b.added.localeCompare(a.added));
+  ).sort((a, b) => b.added.localeCompare(a.added)
+    || (b.addedAt ?? '').localeCompare(a.addedAt ?? ''));
   $('#list-title').textContent = `${words.length ? (prefix || '所有单词') : '示例词块'} · ${visible.length}`;
   $('#grid').innerHTML = visible.length ? visible.map((entry) =>
     `<a class="word level-${entry.level}" href="#word/${encodeURIComponent(entry.id)}">
@@ -1467,7 +1468,7 @@ form.addEventListener('submit', async (event) => {
       const controller = new AbortController();
       lookupController = controller;
       // Preserve the date when the user submits, including a lookup crossing midnight.
-      entry = { id: crypto.randomUUID(), word: wordText, added: ago(0), level: 0 };
+      entry = { id: crypto.randomUUID(), word: wordText, added: ago(0), addedAt: new Date().toISOString(), level: 0 };
       // Play directly from the submit gesture, before dictionary or cloud requests.
       Learning.speak(entry.word, 'us').catch(() => {});
       await libraryLoad;
