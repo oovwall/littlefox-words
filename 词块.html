@@ -1603,20 +1603,33 @@ function drawPracticeWave(run) {
   if (!canvas) return;
   const { width, height } = practiceWave;
   practiceWave.hidden = false;
-  const draw = () => {
+  const barCount = 21;
+  const levels = Array(barCount).fill(0);
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let lastFrame = 0;
+  const draw = (now) => {
+    run.frame = requestAnimationFrame(draw);
+    if (now - lastFrame < (reduceMotion ? 150 : 40)) return;
+    lastFrame = now;
     analyser.getByteTimeDomainData(samples);
     canvas.clearRect(0, 0, width, height);
-    canvas.beginPath();
-    canvas.strokeStyle = '#7353bd';
-    canvas.lineWidth = 2;
-    for (let x = 0; x < width; x++) {
-      const amplitude = (samples[Math.floor(x * samples.length / width)] - 128) / 128;
-      canvas.lineTo(x, height / 2 + Math.max(-1, Math.min(1, amplitude * 2)) * (height / 2 - 3));
+    const rms = Math.sqrt(samples.reduce((sum, sample) => sum + ((sample - 128) / 128) ** 2, 0) / samples.length);
+    const volume = Math.min(1, Math.max(0, rms - 0.008) * 8);
+    for (let index = 0; index < barCount; index++) {
+      const position = (index - (barCount - 1) / 2) / ((barCount - 1) / 2);
+      const envelope = 0.2 + 0.8 * Math.cos(position * Math.PI / 2) ** 2;
+      const variation = 0.85 + 0.15 * Math.sin(now / 420 + index * 0.7);
+      const target = volume * envelope * (reduceMotion ? 1 : variation);
+      levels[index] += (target - levels[index]) * (target > levels[index] ? 0.28 : 0.14);
+      const barHeight = 4 + levels[index] * 42;
+      const x = width / 2 + position * 112 - 2.5;
+      canvas.fillStyle = `rgba(115, 83, 189, ${0.38 + envelope * 0.52})`;
+      canvas.beginPath();
+      canvas.roundRect(x, (height - barHeight) / 2, 5, barHeight, 2.5);
+      canvas.fill();
     }
-    canvas.stroke();
-    run.frame = requestAnimationFrame(draw);
   };
-  draw();
+  run.frame = requestAnimationFrame(draw);
 }
 
 function cancelPractice() {
