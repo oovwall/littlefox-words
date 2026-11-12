@@ -50,9 +50,18 @@ globalThis.Learning = (() => {
     return decoder.value;
   }
 
-  async function quickMeaning(word) {
+  async function quickEntry(word) {
     const local = await localLookup(word);
-    return local.meaning || translate(word);
+    const [meaning, dictionary] = await Promise.allSettled([
+      local.meaning || translate(word),
+      fetchJson('https://api.dictionaryapi.dev/api/v2/entries/en/' + encodeURIComponent(word))
+    ]);
+    const phonetics = dictionary.status === 'fulfilled' && Array.isArray(dictionary.value)
+      ? dictionary.value.flatMap((entry) => entry.phonetics ?? []) : [];
+    const byAccent = (pattern) => phonetics.find(({ audio, text }) => text && pattern.test(audio ?? ''));
+    const us = byAccent(/-us(?:[_.-]|$)/i);
+    const uk = byAccent(/-(?:uk|gb)(?:[_.-]|$)/i);
+    return { meaning: meaning.value, us: us?.text || local.us, uk: uk?.text };
   }
 
   let lexiconPromise;
@@ -423,6 +432,6 @@ globalThis.Learning = (() => {
       missing, extra, substitutions };
   }
 
-  return { normalize, termKey, containsTerm, uniqueExamples, lookup, speak, stopSpeech, scoreSentence, quickMeaning,
+  return { normalize, termKey, containsTerm, uniqueExamples, lookup, speak, stopSpeech, scoreSentence, quickEntry,
     documents, storeDocument, deleteDocument, parsePdf, matchedExamples, textRows, extractExamples };
 })();

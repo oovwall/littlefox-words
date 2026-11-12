@@ -293,10 +293,11 @@ function examplePreview(example) {
   return `<span class="example-text" lang="en">${example.text.split(/([a-z]+(?:[’'-][a-z]+)*)/gi).map((part, index) =>
     index % 2 === 0 ? safe(part) : `<span class="example-preview"><button type="button" class="example-trigger" aria-expanded="false" lang="en">${safe(part)}</button>
     <span class="example-popover" hidden>
+      <strong class="example-headword">${safe(part)}</strong>
       <span class="example-translation" lang="zh-CN" aria-live="polite"></span>
       <span class="example-accents">
-        <button type="button" data-example-accent="us" aria-label="播放单词美音">🔊 美音</button>
-        <button type="button" data-example-accent="uk" aria-label="播放单词英音">🔊 英音</button>
+        <span class="example-accent"><span>美音</span><span data-example-ipa="us"></span><button type="button" data-example-accent="us" aria-label="播放单词美音">🔊</button></span>
+        <span class="example-accent"><span>英音</span><span data-example-ipa="uk"></span><button type="button" data-example-accent="uk" aria-label="播放单词英音">🔊</button></span>
       </span>
     </span>
   </span>`).join('')}</span>`;
@@ -988,7 +989,7 @@ practiceRecord.addEventListener('click', async () => {
 
 let openExample;
 let exampleTimer;
-const exampleTranslations = new Map();
+const exampleEntries = new Map();
 
 function closeExamplePreview() {
   clearTimeout(exampleTimer);
@@ -1005,7 +1006,8 @@ function openExamplePreview(preview) {
   const trigger = preview.querySelector('.example-trigger');
   const output = preview.querySelector('.example-translation');
   const sentence = trigger.textContent;
-  const translation = exampleTranslations.get(sentence.toLowerCase());
+  const key = sentence.toLowerCase();
+  const entry = exampleEntries.get(key);
   trigger.setAttribute('aria-expanded', 'true');
   const popover = preview.querySelector('.example-popover');
   popover.style.marginLeft = '';
@@ -1013,16 +1015,19 @@ function openExamplePreview(preview) {
   const rightEdge = practice.contains(preview) ? practice.getBoundingClientRect().right : document.documentElement.clientWidth;
   const overflow = popover.getBoundingClientRect().right - rightEdge + 8;
   if (overflow > 0) popover.style.marginLeft = '-' + overflow + 'px';
-  output.textContent = translation || '正在获取中文翻译…';
-  if (translation) return;
-  exampleTimer = setTimeout(async () => {
-    try {
-      const translated = await Learning.quickMeaning(sentence.toLowerCase());
-      exampleTranslations.set(sentence.toLowerCase(), translated);
-      output.textContent = translated;
-    } catch {
-      output.textContent = '暂时无法获取中文翻译。';
+  const showEntry = (data) => {
+    output.textContent = data?.meaning || (data ? '暂无中文释义' : '正在查词…');
+    for (const accent of ['us', 'uk']) {
+      popover.querySelector('[data-example-ipa="' + accent + '"]').textContent =
+        data?.[accent] || (data ? '暂无音标' : '…');
     }
+  };
+  showEntry(entry);
+  if (entry) return;
+  exampleTimer = setTimeout(async () => {
+    const data = await Learning.quickEntry(key);
+    if (data.meaning || data.us || data.uk) exampleEntries.set(key, data);
+    showEntry(data);
   }, 250);
 }
 
@@ -1032,13 +1037,14 @@ document.addEventListener('pointerover', (event) => {
 });
 document.addEventListener('pointerout', (event) => {
   if (event.pointerType === 'mouse' && openExample?.contains(event.target)
-    && !openExample.contains(event.relatedTarget) && !openExample.contains(document.activeElement)) closeExamplePreview();
+    && !openExample.contains(event.relatedTarget)) closeExamplePreview();
 });
 document.addEventListener('focusin', (event) => {
   if (event.target.matches('.example-trigger:focus-visible')) openExamplePreview(event.target.parentElement);
 });
 document.addEventListener('focusout', (event) => {
-  if (openExample?.contains(event.target) && !openExample.contains(event.relatedTarget)) closeExamplePreview();
+  if (event.target.matches(':focus-visible') && openExample?.contains(event.target)
+    && !openExample.contains(event.relatedTarget)) closeExamplePreview();
 });
 document.addEventListener('pointerdown', (event) => {
   if (openExample && !openExample.contains(event.target)) closeExamplePreview();
@@ -1061,7 +1067,7 @@ document.addEventListener('click', (event) => {
   }
   if (button.dataset.exampleAccent) {
     const sentence = button.closest('.example-preview').querySelector('.example-trigger').textContent;
-    readAloud(sentence, button.dataset.exampleAccent, undefined, button);
+    Learning.speak(sentence, button.dataset.exampleAccent).catch((error) => toast(error.message));
     return;
   }
 });

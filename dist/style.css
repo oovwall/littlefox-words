@@ -22,7 +22,7 @@ dialog{border:1px solid var(--line);border-radius:20px;padding:22px;width:min(52
 #practice-wave{width:100%;height:56px;background:#f2edf9;border-radius:8px}#practice-playback p{margin:12px 0 6px;font-weight:600}#practice-audio{display:block;width:100%}
 .example-text{flex:1;min-width:0}.example-preview{position:relative;display:inline-block}
 .example-trigger{display:inline;text-align:left;padding:0;border:0;background:transparent;color:inherit;font:inherit;line-height:1.7;text-decoration:underline dotted;text-underline-offset:4px;text-decoration-color:#b4a3d4;overflow-wrap:anywhere}
-.example-popover{position:absolute;top:100%;left:0;z-index:5;width:max-content;max-width:min(240px,calc(100vw - 56px));padding:12px;border:1px solid var(--line);border-radius:10px;background:white;box-shadow:0 8px 28px #28243824}
+.example-popover{position:absolute;top:100%;left:0;z-index:5;width:min(230px,calc(100vw - 56px));padding:12px;border:1px solid var(--line);border-radius:10px;background:white;box-shadow:0 8px 28px #28243824}
 .example-translation{display:block;margin:0 0 8px;color:var(--ink)}
-.example-accents{display:flex;gap:8px;flex-wrap:wrap}
+.example-headword{display:block;margin-bottom:4px}.example-accents{display:grid;gap:6px}.example-accent{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px;font-size:13px}.example-accent [data-example-ipa]{overflow-wrap:anywhere}
 .example-accents button{font-size:13px}
