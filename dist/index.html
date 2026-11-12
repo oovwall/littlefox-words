@@ -58,6 +58,11 @@
       <button type="button" class="primary" id="practice-record">开始跟读</button>
     </div>
     <p id="practice-status" role="status"></p>
+    <canvas id="practice-wave" width="480" height="56" hidden aria-hidden="true"></canvas>
+    <div id="practice-playback" hidden>
+      <p id="practice-playback-label">我的录音</p>
+      <audio id="practice-audio" controls aria-labelledby="practice-playback-label"></audio>
+    </div>
     <div id="practice-result" aria-live="polite"></div>
   </dialog>
   <input type="file" id="pdf-files" accept=".pdf,application/pdf" multiple hidden>

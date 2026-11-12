@@ -750,17 +750,69 @@ const practiceRecord = $('#practice-record');
 const practicePlay = $('#practice-play');
 const practiceStatus = $('#practice-status');
 const practiceResult = $('#practice-result');
+const practiceAudio = $('#practice-audio');
+const practiceWave = $('#practice-wave');
 const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+const canRecord = Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
 let practiceSentence = '';
 let practiceRun;
+let practiceTake;
+let recordingUrl;
+
+function clearPracticeAudio() {
+  practiceTake = undefined;
+  practiceAudio.pause();
+  practiceAudio.removeAttribute('src');
+  practiceAudio.load();
+  if (recordingUrl) URL.revokeObjectURL(recordingUrl);
+  recordingUrl = undefined;
+  $('#practice-playback').hidden = true;
+}
+
+function releaseMicrophone(run) {
+  cancelAnimationFrame(run.frame);
+  practiceWave.hidden = true;
+  if (run.audioContext) run.audioContext.close().catch(() => {});
+  run.audioContext = undefined;
+  if (run.recorder?.state === 'recording') run.recorder.stop();
+  run.stream?.getTracks().forEach((track) => track.stop());
+}
+
+function drawPracticeWave(run) {
+  if (!run.audioContext) return;
+  const analyser = run.audioContext.createAnalyser();
+  run.audioContext.createMediaStreamSource(run.stream).connect(analyser);
+  const samples = new Uint8Array(analyser.fftSize);
+  const canvas = practiceWave.getContext('2d');
+  if (!canvas) return;
+  const { width, height } = practiceWave;
+  practiceWave.hidden = false;
+  const draw = () => {
+    analyser.getByteTimeDomainData(samples);
+    canvas.clearRect(0, 0, width, height);
+    canvas.beginPath();
+    canvas.strokeStyle = '#7353bd';
+    canvas.lineWidth = 2;
+    for (let x = 0; x < width; x++) {
+      const amplitude = (samples[Math.floor(x * samples.length / width)] - 128) / 128;
+      canvas.lineTo(x, height / 2 + Math.max(-1, Math.min(1, amplitude * 2)) * (height / 2 - 3));
+    }
+    canvas.stroke();
+    run.frame = requestAnimationFrame(draw);
+  };
+  draw();
+}
 
 function cancelPractice() {
   const run = practiceRun;
   practiceRun = undefined;
   if (run) {
     clearTimeout(run.timer);
-    run.recognition.abort();
+    run.discard = true;
+    run.recognition?.abort();
+    releaseMicrophone(run);
   }
+  clearPracticeAudio();
   Learning.stopSpeech();
 }
 
@@ -770,15 +822,17 @@ function openPractice(sentence) {
   $('#practice-sentence').textContent = sentence;
   practiceResult.replaceChildren();
   practiceRecord.textContent = '开始跟读';
-  practiceRecord.disabled = !Recognition;
+  practiceRecord.disabled = !canRecord;
   practicePlay.disabled = false;
-  practiceStatus.textContent = Recognition ? '' : '当前浏览器不支持语音识别，可以换用 Chrome 试试。';
+  practiceStatus.textContent = !canRecord ? '当前浏览器无法录音，请在支持麦克风的浏览器中打开。'
+    : Recognition ? '' : '当前浏览器可录音回放，语音评分暂不可用。';
   practice.showModal();
 }
 
 function finishPractice(run, message) {
   if (practiceRun !== run) return;
   clearTimeout(run.timer);
+  releaseMicrophone(run);
   practiceRun = undefined;
   practiceRecord.textContent = '再读一次';
   practiceRecord.disabled = false;
@@ -789,74 +843,120 @@ function finishPractice(run, message) {
 function stopPracticeRecording(run) {
   clearTimeout(run.timer);
   practiceRecord.disabled = true;
+  run.stopped = true;
+  releaseMicrophone(run);
+  if (run.recognitionEnded) {
+    showPracticeScore(run);
+    return;
+  }
   practiceStatus.textContent = '正在比对…';
   run.timer = setTimeout(() => {
     finishPractice(run, '语音识别超时，请再试一次。');
-    run.recognition.abort();
+    run.recognition?.abort();
   }, 10000);
-  run.recognition.stop();
+  run.recognition?.stop();
 }
 
 $('#close-practice').addEventListener('click', () => practice.close());
 practice.addEventListener('close', cancelPractice);
-practicePlay.addEventListener('click', () => readAloud(practiceSentence, 'us', undefined, practicePlay, true));
-practiceRecord.addEventListener('click', () => {
-  if (practiceRun) {
-    stopPracticeRecording(practiceRun);
+practiceAudio.addEventListener('play', () => Learning.stopSpeech());
+practicePlay.addEventListener('click', () => {
+  practiceAudio.pause();
+  readAloud(practiceSentence, 'us', undefined, practicePlay, true);
+});
+
+function showPracticeScore(run) {
+  if (practiceRun !== run) return;
+  finishPractice(run, run.error || (run.transcript ? '' : '没有识别到语音，可以回放录音或再读一次。'));
+  if (!run.transcript) return;
+  const { score, missing, extra, substitutions } = Learning.scoreSentence(practiceSentence, run.transcript);
+  practiceResult.innerHTML = `<h3>跟读匹配度 ${score} / 100</h3>
+    <p>识别结果 <span lang="en">${safe(run.transcript)}</span></p>
+    ${missing.length ? `<p>可能漏读 <span lang="en">${safe(missing.join(' · '))}</span></p>` : ''}
+    ${substitutions.length ? `<p>原词 → 识别词 <span lang="en">${safe(substitutions.map(([target, heard]) => target + ' → ' + heard).join(' · '))}</span></p>` : ''}
+    ${extra.length ? `<p>多识别的词 <span lang="en">${safe(extra.join(' · '))}</span></p>` : ''}`;
+}
+
+function startPracticeRecognition(run) {
+  if (!Recognition) {
+    run.recognitionEnded = true;
+    run.error = '当前浏览器可录音回放，语音评分暂不可用。';
     return;
   }
-  if (!Recognition) return;
-  Learning.stopSpeech();
-  practiceResult.replaceChildren();
-  practicePlay.disabled = true;
-  practiceRecord.disabled = true;
-  practiceStatus.textContent = '正在启动麦克风…';
   const recognition = new Recognition();
+  run.recognition = recognition;
   recognition.lang = 'en-US';
   recognition.continuous = true;
-  recognition.interimResults = false;
-  const run = { recognition, transcript: '', timer: undefined };
-  practiceRun = run;
-  recognition.onstart = () => {
-    if (practiceRun !== run) return;
-    clearTimeout(run.timer);
-    practiceStatus.textContent = '正在听，请读出整句。';
-    practiceRecord.disabled = false;
-    practiceRecord.textContent = '读完了';
-    run.timer = setTimeout(() => stopPracticeRecording(run), 45_000);
-  };
   recognition.onresult = (event) => {
     run.transcript = Array.from(event.results).filter((result) => result.isFinal)
       .map((result) => result[0].transcript).join(' ').trim();
   };
   recognition.onerror = ({ error }) => {
-    const messages = {
-      'not-allowed': '请允许麦克风权限，再试一次。',
-      'audio-capture': '没有检测到可用的麦克风。',
-      'no-speech': '没有识别到语音，请再读一次。',
-      network: '语音识别服务连接失败，请检查网络后重试。'
-    };
-    finishPractice(run, messages[error] ?? '语音识别暂时不可用，请再试一次。');
+    if (error === 'network') run.error = '语音识别服务连接失败，仍可回放录音。';
+    else if (error !== 'no-speech') run.error = '语音评分暂不可用，仍可回放录音。';
   };
   recognition.onend = () => {
-    if (practiceRun !== run) return;
-    finishPractice(run, run.transcript ? '' : '没有识别到语音，请再读一次。');
-    if (!run.transcript) return;
-    const { score, missing, extra, substitutions } = Learning.scoreSentence(practiceSentence, run.transcript);
-    practiceResult.innerHTML = `<h3>跟读匹配度 ${score} / 100</h3>
-      <p>识别结果 <span lang="en">${safe(run.transcript)}</span></p>
-      ${missing.length ? `<p>可能漏读 <span lang="en">${safe(missing.join(' · '))}</span></p>` : ''}
-      ${substitutions.length ? `<p>原词 → 识别词 <span lang="en">${safe(substitutions.map(([target, heard]) => target + ' → ' + heard).join(' · '))}</span></p>` : ''}
-      ${extra.length ? `<p>多识别的词 <span lang="en">${safe(extra.join(' · '))}</span></p>` : ''}`;
+    run.recognitionEnded = true;
+    if (run.stopped) showPracticeScore(run);
   };
+  try { recognition.start(); }
+  catch {
+    run.recognitionEnded = true;
+    run.error = '语音评分暂不可用，仍可回放录音。';
+  }
+}
+
+practiceRecord.addEventListener('click', async () => {
+  if (practiceRun) {
+    stopPracticeRecording(practiceRun);
+    return;
+  }
+  if (!canRecord) return;
+  Learning.stopSpeech();
+  clearPracticeAudio();
+  practiceResult.replaceChildren();
+  practicePlay.disabled = true;
+  practiceRecord.disabled = true;
+  practiceStatus.textContent = '正在启动麦克风…';
+  const run = { transcript: '' };
+  practiceRun = run;
+  practiceTake = run;
   try {
-    recognition.start();
-    run.timer = setTimeout(() => {
-      finishPractice(run, '麦克风启动超时，请检查权限后重试。');
-      recognition.abort();
-    }, 15_000);
-  } catch {
-    finishPractice(run, '无法启动语音识别，请检查浏览器和麦克风权限。');
+    const AudioContextClass = window.AudioContext ?? window.webkitAudioContext;
+    if (AudioContextClass) {
+      try {
+        run.audioContext = new AudioContextClass();
+        run.audioContext.resume().catch(() => {});
+      } catch { /* Recording can continue without a waveform. */ }
+    }
+    run.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    if (practiceRun !== run) {
+      run.stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    run.recorder = new MediaRecorder(run.stream);
+    const chunks = [];
+    run.recorder.ondataavailable = ({ data }) => { if (data.size) chunks.push(data); };
+    run.recorder.onstop = () => {
+      if (practiceTake !== run || !chunks.length || !practice.open) return;
+      recordingUrl = URL.createObjectURL(new Blob(chunks, { type: run.recorder.mimeType || chunks[0].type }));
+      practiceAudio.src = recordingUrl;
+      $('#practice-playback').hidden = false;
+    };
+    run.recorder.onerror = () => {
+      finishPractice(run, '录音中断，请再试一次。');
+      run.recognition?.abort();
+    };
+    run.recorder.start();
+    try { drawPracticeWave(run); } catch { /* The recording remains available. */ }
+    practiceStatus.textContent = '正在录音，请读出整句。';
+    practiceRecord.disabled = false;
+    practiceRecord.textContent = '读完了';
+    run.timer = setTimeout(() => stopPracticeRecording(run), 45_000);
+    startPracticeRecognition(run);
+  } catch (error) {
+    finishPractice(run, error.name === 'NotAllowedError' ? '请允许麦克风权限，再试一次。'
+      : '无法录音，请检查麦克风是否可用。');
   }
 });
 
