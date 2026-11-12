@@ -1656,6 +1656,7 @@ function openPractice(sentence) {
   practiceStatus.textContent = !canRecord ? '当前浏览器无法录音，请在支持麦克风的浏览器中打开。'
     : Recognition ? '' : '当前浏览器可录音回放，语音评分暂不可用。';
   practice.showModal();
+  readAloud(sentence, 'us', undefined, practicePlay, true);
 }
 
 function finishPractice(run, message) {
