@@ -25,6 +25,7 @@ dialog{border:1px solid var(--line);border-radius:20px;padding:22px;width:min(52
 .auth-gate{display:none}.top-actions{display:flex;align-items:center;gap:12px}html[data-auth=required] body{display:block}html[data-auth=required] :is(.sidebar,main,dialog,#toast){display:none}.auth-gate .logo{margin:0 auto 12px}.auth-panel{text-align:center;padding:24px;width:min(100%,500px)}.auth-panel h1{margin-bottom:8px}.auth-panel p{margin-bottom:16px}#clerk-sign-in{display:grid;justify-content:center}html[data-auth=required] .auth-gate{display:grid;place-items:center;min-height:100dvh}
 .review-link{display:inline-block;width:max-content;margin-top:12px;padding:8px 12px;border-radius:8px;background:var(--accent);color:white;font-size:13px;font-weight:600}.review-card{display:grid;gap:16px}.review-card h2{font-size:clamp(1.3rem,4vw,2rem);overflow-wrap:anywhere}.review-actions,.pdf-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.review-actions{margin-top:10px}.review-actions button{min-height:44px}.review-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.review-metrics a{display:block}.lesson-words{margin-top:16px}.sync-controls{padding:6px 20px;font-size:12px;color:var(--muted)}.sync-controls button{margin-left:8px;padding:4px 8px;font-size:12px}.danger{color:#a24259}.pdf-actions{justify-content:flex-end}.pdf-actions a{padding:8px 0}#keep-adding-option input{display:inline;width:auto;margin-right:5px}#guest-login{white-space:nowrap}
 @media(max-width:540px){.sidebar{flex-wrap:wrap}.sidebar nav{width:100%;justify-content:space-between}.top-actions{gap:8px}.top-actions .primary{white-space:nowrap}.pdf-card{flex-wrap:wrap}.pdf-info{flex-basis:100%}.review-actions button{flex:1}.review-metrics .metric{padding:8px}.sync-controls{padding-inline:12px}}
+.word-group + .word-group{margin-top:22px}.word-group h3{margin:0 0 10px;font-size:16px}.word-group h3 small{margin-left:6px;color:var(--muted);font-size:12px;font-weight:400}
 
 </style>
 </head>
@@ -811,7 +812,6 @@ try {
   storageIssue = '无法读取本地词库，请检查浏览器存储设置。';
 }
 let scope = 'all';
-let selectedDate = ago(0);
 let query = '';
 let chartScope = 'day';
 let editing = null;
@@ -1005,13 +1005,13 @@ function wordList() {
     <section class="section">
       <div class="toolbar">
         ${segments(scopes, scope, 'scope')}
-        <div class="filters"><div id="date-filter"></div><input class="search" type="search" aria-label="搜索单词或释义" placeholder="⌕  搜索单词或释义"></div>
+        <input class="search" type="search" aria-label="搜索单词或释义" placeholder="⌕  搜索单词或释义">
       </div>
       <div class="subbar">
         <h2 id="list-title"></h2>
         <div class="legend" aria-label="熟悉度">${levels.map((level, index) => `<span><i class="level-${index}"></i>${level}</span>`).join('')}</div>
       </div>
-      <div class="grid" id="grid"></div>
+      <div id="grid"></div>
     </section>`;
   const search = $('.search');
   search.value = query;
@@ -1019,42 +1019,41 @@ function wordList() {
     query = search.value;
     showGrid();
   });
-  showDateFilter();
   showGrid();
-}
-
-function showDateFilter() {
-  const size = { day: 10, month: 7, year: 4 }[scope];
-  const prefix = selectedDate.slice(0, size);
-  const container = $('#date-filter');
-  if (!size) {
-    container.innerHTML = '';
-    return;
-  }
-  const allDates = (words.length ? words : samples).map(({ added }) => added.slice(0, size));
-  const dates = [...new Set([prefix, ago(0).slice(0, size), ...allDates])].sort().reverse();
-  container.innerHTML = `<select class="date-filter" aria-label="选择录入日期">${dates.map((date) =>
-    `<option ${date === prefix ? 'selected' : ''}>${safe(date)}</option>`).join('')}</select>`;
-  container.firstElementChild.addEventListener('change', (event) => {
-    selectedDate = event.target.value.padEnd(10, '-01'.repeat(3));
-    showGrid();
-  });
 }
 
 function showGrid() {
   const length = { all: 0, day: 10, month: 7, year: 4 }[scope];
-  const prefix = selectedDate.slice(0, length);
   const term = query.trim().toLowerCase();
-  const visible = (words.length ? words : samples).filter(({ word, meaning, added }) =>
-    added.startsWith(prefix) && (word.toLowerCase().includes(term) || (meaning ?? '').toLowerCase().includes(term))
+  const visible = (words.length ? words : samples).filter(({ word, meaning }) =>
+    word.toLowerCase().includes(term) || (meaning ?? '').toLowerCase().includes(term)
   ).sort((a, b) => b.added.localeCompare(a.added)
     || (b.addedAt ?? '').localeCompare(a.addedAt ?? ''));
-  $('#list-title').textContent = `${words.length ? (prefix || '所有单词') : '示例词块'} · ${visible.length}`;
-  $('#grid').innerHTML = visible.length ? visible.map((entry) =>
+  $('#list-title').textContent = `${words.length ? '所有单词' : '示例词块'} · ${visible.length}`;
+  const grid = $('#grid');
+  if (!visible.length) {
+    grid.innerHTML = '<p class="empty">没有匹配的单词。</p>';
+    return;
+  }
+  const renderCards = (entries) => `<div class="grid">${entries.map((entry) =>
     `<a class="word level-${entry.level}" href="#word/${encodeURIComponent(entry.id)}">
       <div><strong>${safe(entry.word)}</strong><p>${safe(entry.meaning || '待补充释义')}</p></div>
       <small>${safe(entry.added)} · ${levels[entry.level]}</small>
-    </a>`).join('') : '<p class="empty">这个范围内没有匹配的单词。</p>';
+    </a>`).join('')}</div>`;
+  if (!length) {
+    grid.innerHTML = renderCards(visible);
+    return;
+  }
+  const groups = new Map();
+  for (const entry of visible) {
+    const date = entry.added.slice(0, length);
+    if (!groups.has(date)) groups.set(date, []);
+    groups.get(date).push(entry);
+  }
+  grid.innerHTML = [...groups].map(([date, entries]) => `<section class="word-group">
+    <h3>${safe(date)} <small>${entries.length} 词</small></h3>
+    ${renderCards(entries)}
+  </section>`).join('');
 }
 
 function showWord(word) {
@@ -1561,7 +1560,6 @@ view.addEventListener('click', async (event) => {
   if (nextScope) {
     scope = nextScope;
     for (const item of view.querySelectorAll('[data-scope]')) item.setAttribute('aria-pressed', String(item === button));
-    showDateFilter();
     showGrid();
   }
   if (chart) {

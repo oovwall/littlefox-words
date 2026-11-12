@@ -45,7 +45,6 @@ try {
   storageIssue = '无法读取本地词库，请检查浏览器存储设置。';
 }
 let scope = 'all';
-let selectedDate = ago(0);
 let query = '';
 let chartScope = 'day';
 let editing = null;
@@ -239,13 +238,13 @@ function wordList() {
     <section class="section">
       <div class="toolbar">
         ${segments(scopes, scope, 'scope')}
-        <div class="filters"><div id="date-filter"></div><input class="search" type="search" aria-label="搜索单词或释义" placeholder="⌕  搜索单词或释义"></div>
+        <input class="search" type="search" aria-label="搜索单词或释义" placeholder="⌕  搜索单词或释义">
       </div>
       <div class="subbar">
         <h2 id="list-title"></h2>
         <div class="legend" aria-label="熟悉度">${levels.map((level, index) => `<span><i class="level-${index}"></i>${level}</span>`).join('')}</div>
       </div>
-      <div class="grid" id="grid"></div>
+      <div id="grid"></div>
     </section>`;
   const search = $('.search');
   search.value = query;
@@ -253,42 +252,41 @@ function wordList() {
     query = search.value;
     showGrid();
   });
-  showDateFilter();
   showGrid();
-}
-
-function showDateFilter() {
-  const size = { day: 10, month: 7, year: 4 }[scope];
-  const prefix = selectedDate.slice(0, size);
-  const container = $('#date-filter');
-  if (!size) {
-    container.innerHTML = '';
-    return;
-  }
-  const allDates = (words.length ? words : samples).map(({ added }) => added.slice(0, size));
-  const dates = [...new Set([prefix, ago(0).slice(0, size), ...allDates])].sort().reverse();
-  container.innerHTML = `<select class="date-filter" aria-label="选择录入日期">${dates.map((date) =>
-    `<option ${date === prefix ? 'selected' : ''}>${safe(date)}</option>`).join('')}</select>`;
-  container.firstElementChild.addEventListener('change', (event) => {
-    selectedDate = event.target.value.padEnd(10, '-01'.repeat(3));
-    showGrid();
-  });
 }
 
 function showGrid() {
   const length = { all: 0, day: 10, month: 7, year: 4 }[scope];
-  const prefix = selectedDate.slice(0, length);
   const term = query.trim().toLowerCase();
-  const visible = (words.length ? words : samples).filter(({ word, meaning, added }) =>
-    added.startsWith(prefix) && (word.toLowerCase().includes(term) || (meaning ?? '').toLowerCase().includes(term))
+  const visible = (words.length ? words : samples).filter(({ word, meaning }) =>
+    word.toLowerCase().includes(term) || (meaning ?? '').toLowerCase().includes(term)
   ).sort((a, b) => b.added.localeCompare(a.added)
     || (b.addedAt ?? '').localeCompare(a.addedAt ?? ''));
-  $('#list-title').textContent = `${words.length ? (prefix || '所有单词') : '示例词块'} · ${visible.length}`;
-  $('#grid').innerHTML = visible.length ? visible.map((entry) =>
+  $('#list-title').textContent = `${words.length ? '所有单词' : '示例词块'} · ${visible.length}`;
+  const grid = $('#grid');
+  if (!visible.length) {
+    grid.innerHTML = '<p class="empty">没有匹配的单词。</p>';
+    return;
+  }
+  const renderCards = (entries) => `<div class="grid">${entries.map((entry) =>
     `<a class="word level-${entry.level}" href="#word/${encodeURIComponent(entry.id)}">
       <div><strong>${safe(entry.word)}</strong><p>${safe(entry.meaning || '待补充释义')}</p></div>
       <small>${safe(entry.added)} · ${levels[entry.level]}</small>
-    </a>`).join('') : '<p class="empty">这个范围内没有匹配的单词。</p>';
+    </a>`).join('')}</div>`;
+  if (!length) {
+    grid.innerHTML = renderCards(visible);
+    return;
+  }
+  const groups = new Map();
+  for (const entry of visible) {
+    const date = entry.added.slice(0, length);
+    if (!groups.has(date)) groups.set(date, []);
+    groups.get(date).push(entry);
+  }
+  grid.innerHTML = [...groups].map(([date, entries]) => `<section class="word-group">
+    <h3>${safe(date)} <small>${entries.length} 词</small></h3>
+    ${renderCards(entries)}
+  </section>`).join('');
 }
 
 function showWord(word) {
@@ -795,7 +793,6 @@ view.addEventListener('click', async (event) => {
   if (nextScope) {
     scope = nextScope;
     for (const item of view.querySelectorAll('[data-scope]')) item.setAttribute('aria-pressed', String(item === button));
-    showDateFilter();
     showGrid();
   }
   if (chart) {
