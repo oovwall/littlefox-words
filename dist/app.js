@@ -289,6 +289,19 @@ function showGrid() {
   </section>`).join('');
 }
 
+function examplePreview(example) {
+  return `<div class="example-preview" data-translation="${safe(example.translation ?? '')}">
+    <button type="button" class="example-trigger" aria-expanded="false" lang="en">${safe(example.text)}</button>
+    <div class="example-popover" hidden>
+      <p class="example-translation" aria-live="polite"></p>
+      <div class="example-accents">
+        <button type="button" data-example-accent="us" aria-label="播放美音示范">🔊 美音</button>
+        <button type="button" data-example-accent="uk" aria-label="播放英音示范">🔊 英音</button>
+      </div>
+    </div>
+  </div>`;
+}
+
 function showWord(word) {
   const examples = examplesFor(word);
   const missing = [
@@ -315,8 +328,7 @@ function showWord(word) {
     <section class="panel">
       <div class="toolbar"><h2>例句 <span class="muted">${examples.length}</span></h2><a class="text-link" href="#library">管理 PDF 例句库 →</a></div>
       ${examples.length ? examples.map((example, index) => `<div class="example">
-        <div class="example-line"><p>${safe(example.text)}</p><button data-sentence="${index}" class="speaker" aria-label="朗读例句 ${index + 1}" title="朗读例句">🔊</button><button data-practice="${safe(example.text)}" aria-label="跟读例句 ${index + 1}">跟读</button></div>
-        ${example.translation ? `<p class="muted">${safe(example.translation)}</p>` : ''}
+        <div class="example-line">${examplePreview(example)}<button data-sentence="${index}" class="speaker" aria-label="朗读例句 ${index + 1}" title="朗读例句">🔊</button><button data-practice="${safe(example.text)}" aria-label="跟读例句 ${index + 1}">跟读</button></div>
         <div class="example-source">${example.sources?.length ? example.sources.map((source) =>
           `<span>Little Fox · ${safe(source.name)} · 第 ${safe(source.page)} 页</span>`).join('') : safe(example.source || '我的例句')}</div>
       </div>`).join('') : `<p class="muted">${libraryReady ? '暂未找到例句，可以上传 Little Fox 单词 PDF 自动匹配。' : '正在读取 PDF 例句库…'}</p>`}
@@ -506,7 +518,7 @@ function showReview() {
     ${word ? `<section class="panel review-card"><p class="muted">第 ${session.index + 1} / ${session.ids.length} 个</p>
       <h2>${safe(question ? question.prompt : word.word)}</h2>
       ${session.revealed ? `<p class="definition">${safe(word.meaning || '暂无中文释义')}</p>
-        ${example ? `<div class="example-line"><p>${safe(example.text)}</p><button class="speaker" data-review-audio aria-label="朗读例句">🔊</button><button data-practice="${safe(example.text)}">跟读</button></div>` : ''}
+        ${example ? `<div class="example-line">${examplePreview(example)}<button class="speaker" data-review-audio aria-label="朗读例句">🔊</button><button data-practice="${safe(example.text)}">跟读</button></div>` : ''}
         <div class="review-actions"><button data-rate="again">忘了</button><button data-rate="hard">模糊</button><button class="primary" data-rate="good">记得</button></div>`
         : `${question ? '<label>填入缺少的单词<input class="search" id="cloze-answer" autocomplete="off"></label>' : '<p class="muted">先回想中文释义，再翻卡。</p>'}
           <div class="review-actions"><button class="primary" data-reveal>显示答案</button></div>`}
@@ -974,6 +986,66 @@ practiceRecord.addEventListener('click', async () => {
   }
 });
 
+let openExample;
+let exampleTimer;
+const exampleTranslations = new Map();
+
+function closeExamplePreview() {
+  clearTimeout(exampleTimer);
+  if (!openExample) return;
+  openExample.querySelector('.example-trigger').setAttribute('aria-expanded', 'false');
+  openExample.querySelector('.example-popover').hidden = true;
+  openExample = undefined;
+}
+
+function openExamplePreview(preview) {
+  if (openExample === preview) return;
+  closeExamplePreview();
+  openExample = preview;
+  const trigger = preview.querySelector('.example-trigger');
+  const output = preview.querySelector('.example-translation');
+  const sentence = trigger.textContent;
+  const translation = preview.dataset.translation || exampleTranslations.get(sentence);
+  trigger.setAttribute('aria-expanded', 'true');
+  preview.querySelector('.example-popover').hidden = false;
+  output.textContent = translation || '正在获取中文翻译…';
+  if (translation) return;
+  exampleTimer = setTimeout(async () => {
+    try {
+      const translated = await Learning.translateExample(sentence);
+      exampleTranslations.set(sentence, translated);
+      output.textContent = translated;
+    } catch {
+      output.textContent = '暂时无法获取中文翻译。';
+    }
+  }, 250);
+}
+
+view.addEventListener('pointerover', (event) => {
+  const preview = event.target.closest('.example-preview');
+  if (event.pointerType === 'mouse' && preview) openExamplePreview(preview);
+});
+view.addEventListener('pointerout', (event) => {
+  if (event.pointerType === 'mouse' && openExample?.contains(event.target)
+    && !openExample.contains(event.relatedTarget) && !openExample.contains(document.activeElement)) closeExamplePreview();
+});
+view.addEventListener('focusin', (event) => {
+  if (event.target.matches('.example-trigger:focus-visible')) openExamplePreview(event.target.parentElement);
+});
+view.addEventListener('focusout', (event) => {
+  if (openExample?.contains(event.target) && !openExample.contains(event.relatedTarget)) closeExamplePreview();
+});
+document.addEventListener('pointerdown', (event) => {
+  if (openExample && !openExample.contains(event.target)) closeExamplePreview();
+});
+view.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && openExample) {
+    const trigger = openExample.querySelector('.example-trigger');
+    trigger.focus();
+    closeExamplePreview();
+  }
+});
+
 view.addEventListener('click', async (event) => {
   const wordLink = event.target.closest('a[href^="#word/"]');
   if (wordLink && !event.defaultPrevented && event.button === 0
@@ -989,6 +1061,15 @@ view.addEventListener('click', async (event) => {
   }
   const button = event.target.closest('button');
   if (!button) return;
+  if (button.matches('.example-trigger')) {
+    openExamplePreview(button.parentElement);
+    return;
+  }
+  if (button.dataset.exampleAccent) {
+    const sentence = button.closest('.example-preview').querySelector('.example-trigger').textContent;
+    readAloud(sentence, button.dataset.exampleAccent, undefined, button, true);
+    return;
+  }
   if (button.dataset.practice) {
     openPractice(button.dataset.practice);
     return;
@@ -1052,6 +1133,7 @@ view.addEventListener('click', async (event) => {
 });
 
 window.addEventListener('hashchange', () => {
+  closeExamplePreview();
   if ($('#practice').open) $('#practice').close();
   reviewSession = undefined;
   if (location.hash !== pronunciationDestination) Learning.stopSpeech();
