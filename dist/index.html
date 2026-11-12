@@ -49,6 +49,17 @@
       <div class="dialog-actions"><button type="button" id="cancel">取消</button><button class="primary" id="save-entry" type="submit">保存单词</button></div>
     </form>
   </dialog>
+  <dialog id="practice" aria-labelledby="practice-title">
+    <div class="dialog-head"><h2 id="practice-title">例句跟读</h2><button type="button" class="icon" id="close-practice" aria-label="关闭跟读">×</button></div>
+    <p id="practice-sentence" lang="en"></p>
+    <p class="muted form-note">分数按识别文字与原句的匹配度计算。浏览器可能将语音发送给其识别服务。</p>
+    <div class="review-actions">
+      <button type="button" id="practice-play">听示范</button>
+      <button type="button" class="primary" id="practice-record">开始跟读</button>
+    </div>
+    <p id="practice-status" role="status"></p>
+    <div id="practice-result" aria-live="polite"></div>
+  </dialog>
   <input type="file" id="pdf-files" accept=".pdf,application/pdf" multiple hidden>
   <div id="toast" role="status"></div>
 </body>

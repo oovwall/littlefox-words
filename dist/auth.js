@@ -54,6 +54,7 @@
         if (session?.id === activeSession) return;
         root.dataset.auth = 'required';
         document.getElementById('editor').close();
+        document.getElementById('practice').close();
         window.Learning?.stopSpeech();
         location.reload();
         return;

@@ -315,7 +315,7 @@ function showWord(word) {
     <section class="panel">
       <div class="toolbar"><h2>例句 <span class="muted">${examples.length}</span></h2><a class="text-link" href="#library">管理 PDF 例句库 →</a></div>
       ${examples.length ? examples.map((example, index) => `<div class="example">
-        <div class="example-line"><p>${safe(example.text)}</p><button data-sentence="${index}" class="speaker" aria-label="朗读例句 ${index + 1}" title="朗读例句">🔊</button></div>
+        <div class="example-line"><p>${safe(example.text)}</p><button data-sentence="${index}" class="speaker" aria-label="朗读例句 ${index + 1}" title="朗读例句">🔊</button><button data-practice="${safe(example.text)}" aria-label="跟读例句 ${index + 1}">跟读</button></div>
         ${example.translation ? `<p class="muted">${safe(example.translation)}</p>` : ''}
         <div class="example-source">${example.sources?.length ? example.sources.map((source) =>
           `<span>Little Fox · ${safe(source.name)} · 第 ${safe(source.page)} 页</span>`).join('') : safe(example.source || '我的例句')}</div>
@@ -506,7 +506,7 @@ function showReview() {
     ${word ? `<section class="panel review-card"><p class="muted">第 ${session.index + 1} / ${session.ids.length} 个</p>
       <h2>${safe(question ? question.prompt : word.word)}</h2>
       ${session.revealed ? `<p class="definition">${safe(word.meaning || '暂无中文释义')}</p>
-        ${example ? `<div class="example-line"><p>${safe(example.text)}</p><button class="speaker" data-review-audio aria-label="朗读例句">🔊</button></div>` : ''}
+        ${example ? `<div class="example-line"><p>${safe(example.text)}</p><button class="speaker" data-review-audio aria-label="朗读例句">🔊</button><button data-practice="${safe(example.text)}">跟读</button></div>` : ''}
         <div class="review-actions"><button data-rate="again">忘了</button><button data-rate="hard">模糊</button><button class="primary" data-rate="good">记得</button></div>`
         : `${question ? '<label>填入缺少的单词<input class="search" id="cloze-answer" autocomplete="off"></label>' : '<p class="muted">先回想中文释义，再翻卡。</p>'}
           <div class="review-actions"><button class="primary" data-reveal>显示答案</button></div>`}
@@ -745,6 +745,121 @@ form.addEventListener('submit', async (event) => {
   }
 });
 
+const practice = $('#practice');
+const practiceRecord = $('#practice-record');
+const practicePlay = $('#practice-play');
+const practiceStatus = $('#practice-status');
+const practiceResult = $('#practice-result');
+const Recognition = window.SpeechRecognition ?? window.webkitSpeechRecognition;
+let practiceSentence = '';
+let practiceRun;
+
+function cancelPractice() {
+  const run = practiceRun;
+  practiceRun = undefined;
+  if (run) {
+    clearTimeout(run.timer);
+    run.recognition.abort();
+  }
+  Learning.stopSpeech();
+}
+
+function openPractice(sentence) {
+  cancelPractice();
+  practiceSentence = sentence;
+  $('#practice-sentence').textContent = sentence;
+  practiceResult.replaceChildren();
+  practiceRecord.textContent = '开始跟读';
+  practiceRecord.disabled = !Recognition;
+  practicePlay.disabled = false;
+  practiceStatus.textContent = Recognition ? '' : '当前浏览器不支持语音识别，可以换用 Chrome 试试。';
+  practice.showModal();
+}
+
+function finishPractice(run, message) {
+  if (practiceRun !== run) return;
+  clearTimeout(run.timer);
+  practiceRun = undefined;
+  practiceRecord.textContent = '再读一次';
+  practiceRecord.disabled = false;
+  practicePlay.disabled = false;
+  practiceStatus.textContent = message;
+}
+
+function stopPracticeRecording(run) {
+  clearTimeout(run.timer);
+  practiceRecord.disabled = true;
+  practiceStatus.textContent = '正在比对…';
+  run.timer = setTimeout(() => {
+    finishPractice(run, '语音识别超时，请再试一次。');
+    run.recognition.abort();
+  }, 10000);
+  run.recognition.stop();
+}
+
+$('#close-practice').addEventListener('click', () => practice.close());
+practice.addEventListener('close', cancelPractice);
+practicePlay.addEventListener('click', () => readAloud(practiceSentence, 'us', undefined, practicePlay, true));
+practiceRecord.addEventListener('click', () => {
+  if (practiceRun) {
+    stopPracticeRecording(practiceRun);
+    return;
+  }
+  if (!Recognition) return;
+  Learning.stopSpeech();
+  practiceResult.replaceChildren();
+  practicePlay.disabled = true;
+  practiceRecord.disabled = true;
+  practiceStatus.textContent = '正在启动麦克风…';
+  const recognition = new Recognition();
+  recognition.lang = 'en-US';
+  recognition.continuous = true;
+  recognition.interimResults = false;
+  const run = { recognition, transcript: '', timer: undefined };
+  practiceRun = run;
+  recognition.onstart = () => {
+    if (practiceRun !== run) return;
+    clearTimeout(run.timer);
+    practiceStatus.textContent = '正在听，请读出整句。';
+    practiceRecord.disabled = false;
+    practiceRecord.textContent = '读完了';
+    run.timer = setTimeout(() => stopPracticeRecording(run), 45_000);
+  };
+  recognition.onresult = (event) => {
+    run.transcript = Array.from(event.results).filter((result) => result.isFinal)
+      .map((result) => result[0].transcript).join(' ').trim();
+  };
+  recognition.onerror = ({ error }) => {
+    const messages = {
+      'not-allowed': '请允许麦克风权限，再试一次。',
+      'audio-capture': '没有检测到可用的麦克风。',
+      'no-speech': '没有识别到语音，请再读一次。',
+      network: '语音识别服务连接失败，请检查网络后重试。'
+    };
+    finishPractice(run, messages[error] ?? '语音识别暂时不可用，请再试一次。');
+  };
+  recognition.onend = () => {
+    if (practiceRun !== run) return;
+    finishPractice(run, run.transcript ? '' : '没有识别到语音，请再读一次。');
+    if (!run.transcript) return;
+    const { score, missing, extra, substitutions } = Learning.scoreSentence(practiceSentence, run.transcript);
+    practiceResult.innerHTML = `<h3>跟读匹配度 ${score} / 100</h3>
+      <p>识别结果 <span lang="en">${safe(run.transcript)}</span></p>
+      ${missing.length ? `<p>可能漏读 <span lang="en">${safe(missing.join(' · '))}</span></p>` : ''}
+      ${substitutions.length ? `<p>原词 → 识别词 <span lang="en">${safe(substitutions.map(([target, heard]) => target + ' → ' + heard).join(' · '))}</span></p>` : ''}
+      ${extra.length ? `<p>多识别的词 <span lang="en">${safe(extra.join(' · '))}</span></p>` : ''}`;
+  };
+  try {
+    recognition.start();
+    run.timer = setTimeout(() => {
+      finishPractice(run, '麦克风启动超时，请检查权限后重试。');
+      recognition.abort();
+    }, 15_000);
+  } catch {
+    finishPractice(run, '无法启动语音识别，请检查浏览器和麦克风权限。');
+  }
+});
+
 view.addEventListener('click', async (event) => {
   const wordLink = event.target.closest('a[href^="#word/"]');
   if (wordLink && !event.defaultPrevented && event.button === 0
@@ -760,6 +875,10 @@ view.addEventListener('click', async (event) => {
   }
   const button = event.target.closest('button');
   if (!button) return;
+  if (button.dataset.practice) {
+    openPractice(button.dataset.practice);
+    return;
+  }
   if (/^#(?:review|lesson)(?:\/|$)/.test(location.hash)) {
     await handleReview(button);
     return;
@@ -819,6 +938,7 @@ view.addEventListener('click', async (event) => {
 });
 
 window.addEventListener('hashchange', () => {
+  if ($('#practice').open) $('#practice').close();
   reviewSession = undefined;
   if (location.hash !== pronunciationDestination) Learning.stopSpeech();
   pronunciationDestination = undefined;

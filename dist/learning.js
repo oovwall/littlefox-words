@@ -387,6 +387,37 @@ globalThis.Learning = (() => {
     return cache.get(key);
   }
 
-  return { normalize, termKey, containsTerm, uniqueExamples, lookup, speak, stopSpeech,
+  function scoreSentence(expected, transcript) {
+    const tokens = (value) => termKey(value).match(/[\p{L}\p{N}]+(?:'[\p{L}]+)*/gu) ?? [];
+    const target = tokens(expected);
+    const spoken = tokens(transcript);
+    const distance = Array.from({ length: target.length + 1 }, (_, row) =>
+      Array.from({ length: spoken.length + 1 }, (_, column) => row === 0 ? column : column === 0 ? row : 0));
+    for (let row = 1; row <= target.length; row++) {
+      for (let column = 1; column <= spoken.length; column++) {
+        distance[row][column] = Math.min(distance[row - 1][column] + 1, distance[row][column - 1] + 1,
+          distance[row - 1][column - 1] + Number(target[row - 1] !== spoken[column - 1]));
+      }
+    }
+    const missing = [], extra = [], substitutions = [];
+    let row = target.length, column = spoken.length;
+    const edits = distance[row][column];
+    while (row || column) {
+      if (row && column && target[row - 1] === spoken[column - 1]) {
+        row--;
+        column--;
+      } else if (row && column && distance[row][column] === distance[row - 1][column - 1] + 1) {
+        substitutions.unshift([target[--row], spoken[--column]]);
+      } else if (row && distance[row][column] === distance[row - 1][column] + 1) {
+        missing.unshift(target[--row]);
+      } else {
+        extra.unshift(spoken[--column]);
+      }
+    }
+    return { score: target.length ? Math.max(0, Math.round(100 * (1 - edits / target.length))) : 0,
+      missing, extra, substitutions };
+  }
+
+  return { normalize, termKey, containsTerm, uniqueExamples, lookup, speak, stopSpeech, scoreSentence,
     documents, storeDocument, deleteDocument, parsePdf, matchedExamples, textRows, extractExamples };
 })();
