@@ -50,16 +50,9 @@ globalThis.Learning = (() => {
     return decoder.value;
   }
 
-  async function translateExample(text) {
-    const languages = { sourceLanguage: 'en', targetLanguage: 'zh' };
-    try {
-      if (await globalThis.Translator?.availability(languages) === 'available') {
-        const translator = await Translator.create(languages);
-        try { return await translator.translate(text); }
-        finally { translator.destroy(); }
-      }
-    } catch { /* Fall back to the same translation service used for vocabulary. */ }
-    return translate(text);
+  async function quickMeaning(word) {
+    const local = await localLookup(word);
+    return local.meaning || translate(word);
   }
 
   let lexiconPromise;
@@ -430,6 +423,6 @@ globalThis.Learning = (() => {
       missing, extra, substitutions };
   }
 
-  return { normalize, termKey, containsTerm, uniqueExamples, lookup, speak, stopSpeech, scoreSentence, translateExample,
+  return { normalize, termKey, containsTerm, uniqueExamples, lookup, speak, stopSpeech, scoreSentence, quickMeaning,
     documents, storeDocument, deleteDocument, parsePdf, matchedExamples, textRows, extractExamples };
 })();

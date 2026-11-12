@@ -290,16 +290,16 @@ function showGrid() {
 }
 
 function examplePreview(example) {
-  return `<div class="example-preview" data-translation="${safe(example.translation ?? '')}">
-    <button type="button" class="example-trigger" aria-expanded="false" lang="en">${safe(example.text)}</button>
-    <div class="example-popover" hidden>
-      <p class="example-translation" aria-live="polite"></p>
-      <div class="example-accents">
-        <button type="button" data-example-accent="us" aria-label="播放美音示范">🔊 美音</button>
-        <button type="button" data-example-accent="uk" aria-label="播放英音示范">🔊 英音</button>
-      </div>
-    </div>
-  </div>`;
+  return `<span class="example-text" lang="en">${example.text.split(/([a-z]+(?:[’'-][a-z]+)*)/gi).map((part, index) =>
+    index % 2 === 0 ? safe(part) : `<span class="example-preview"><button type="button" class="example-trigger" aria-expanded="false" lang="en">${safe(part)}</button>
+    <span class="example-popover" hidden>
+      <span class="example-translation" lang="zh-CN" aria-live="polite"></span>
+      <span class="example-accents">
+        <button type="button" data-example-accent="us" aria-label="播放单词美音">🔊 美音</button>
+        <button type="button" data-example-accent="uk" aria-label="播放单词英音">🔊 英音</button>
+      </span>
+    </span>
+  </span>`).join('')}</span>`;
 }
 
 function showWord(word) {
@@ -844,7 +844,7 @@ function cancelPractice() {
 function openPractice(sentence) {
   cancelPractice();
   practiceSentence = sentence;
-  $('#practice-sentence').textContent = sentence;
+  $('#practice-sentence').innerHTML = examplePreview({ text: sentence });
   practiceResult.replaceChildren();
   practiceRecord.textContent = '开始跟读';
   practiceRecord.disabled = !canRecord;
@@ -884,7 +884,7 @@ function stopPracticeRecording(run) {
 }
 
 $('#close-practice').addEventListener('click', () => practice.close());
-practice.addEventListener('close', cancelPractice);
+practice.addEventListener('close', () => { closeExamplePreview(); cancelPractice(); });
 practiceAudio.addEventListener('play', () => Learning.stopSpeech());
 practicePlay.addEventListener('click', () => {
   practiceAudio.pause();
@@ -1005,15 +1005,20 @@ function openExamplePreview(preview) {
   const trigger = preview.querySelector('.example-trigger');
   const output = preview.querySelector('.example-translation');
   const sentence = trigger.textContent;
-  const translation = preview.dataset.translation || exampleTranslations.get(sentence);
+  const translation = exampleTranslations.get(sentence.toLowerCase());
   trigger.setAttribute('aria-expanded', 'true');
-  preview.querySelector('.example-popover').hidden = false;
+  const popover = preview.querySelector('.example-popover');
+  popover.style.marginLeft = '';
+  popover.hidden = false;
+  const rightEdge = practice.contains(preview) ? practice.getBoundingClientRect().right : document.documentElement.clientWidth;
+  const overflow = popover.getBoundingClientRect().right - rightEdge + 8;
+  if (overflow > 0) popover.style.marginLeft = '-' + overflow + 'px';
   output.textContent = translation || '正在获取中文翻译…';
   if (translation) return;
   exampleTimer = setTimeout(async () => {
     try {
-      const translated = await Learning.translateExample(sentence);
-      exampleTranslations.set(sentence, translated);
+      const translated = await Learning.quickMeaning(sentence.toLowerCase());
+      exampleTranslations.set(sentence.toLowerCase(), translated);
       output.textContent = translated;
     } catch {
       output.textContent = '暂时无法获取中文翻译。';
@@ -1021,28 +1026,43 @@ function openExamplePreview(preview) {
   }, 250);
 }
 
-view.addEventListener('pointerover', (event) => {
+document.addEventListener('pointerover', (event) => {
   const preview = event.target.closest('.example-preview');
   if (event.pointerType === 'mouse' && preview) openExamplePreview(preview);
 });
-view.addEventListener('pointerout', (event) => {
+document.addEventListener('pointerout', (event) => {
   if (event.pointerType === 'mouse' && openExample?.contains(event.target)
     && !openExample.contains(event.relatedTarget) && !openExample.contains(document.activeElement)) closeExamplePreview();
 });
-view.addEventListener('focusin', (event) => {
+document.addEventListener('focusin', (event) => {
   if (event.target.matches('.example-trigger:focus-visible')) openExamplePreview(event.target.parentElement);
 });
-view.addEventListener('focusout', (event) => {
+document.addEventListener('focusout', (event) => {
   if (openExample?.contains(event.target) && !openExample.contains(event.relatedTarget)) closeExamplePreview();
 });
 document.addEventListener('pointerdown', (event) => {
   if (openExample && !openExample.contains(event.target)) closeExamplePreview();
 });
-view.addEventListener('keydown', (event) => {
+document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && openExample) {
+    event.preventDefault();
     const trigger = openExample.querySelector('.example-trigger');
     trigger.focus();
     closeExamplePreview();
+  }
+});
+
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('.example-trigger, [data-example-accent]');
+  if (!button) return;
+  if (button.matches('.example-trigger')) {
+    openExamplePreview(button.parentElement);
+    return;
+  }
+  if (button.dataset.exampleAccent) {
+    const sentence = button.closest('.example-preview').querySelector('.example-trigger').textContent;
+    readAloud(sentence, button.dataset.exampleAccent, undefined, button);
+    return;
   }
 });
 
@@ -1060,16 +1080,7 @@ view.addEventListener('click', async (event) => {
     return;
   }
   const button = event.target.closest('button');
-  if (!button) return;
-  if (button.matches('.example-trigger')) {
-    openExamplePreview(button.parentElement);
-    return;
-  }
-  if (button.dataset.exampleAccent) {
-    const sentence = button.closest('.example-preview').querySelector('.example-trigger').textContent;
-    readAloud(sentence, button.dataset.exampleAccent, undefined, button, true);
-    return;
-  }
+  if (!button || button.closest('.example-preview')) return;
   if (button.dataset.practice) {
     openPractice(button.dataset.practice);
     return;
