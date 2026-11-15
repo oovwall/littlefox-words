@@ -255,13 +255,25 @@ function wordList() {
   showGrid();
 }
 
-function showGrid() {
-  const length = { all: 0, day: 10, month: 7, year: 4 }[scope];
+function orderedWords(entries, query) {
   const term = query.trim().toLowerCase();
-  const visible = (words.length ? words : samples).filter(({ word, meaning }) =>
+  return entries.filter(({ word, meaning }) =>
     word.toLowerCase().includes(term) || (meaning ?? '').toLowerCase().includes(term)
   ).sort((a, b) => b.added.localeCompare(a.added)
-    || (b.addedAt ?? '').localeCompare(a.addedAt ?? ''));
+    || (b.addedAt ?? '').localeCompare(a.addedAt ?? '') || String(a.id).localeCompare(String(b.id)));
+}
+
+function adjacentWords(word) {
+  const entries = word.sample ? samples : words;
+  let ordered = orderedWords(entries, query);
+  if (!ordered.some((entry) => entry.id === word.id)) ordered = orderedWords(entries, '');
+  const index = ordered.findIndex((entry) => entry.id === word.id);
+  return { previous: ordered[index - 1], next: index < 0 ? undefined : ordered[index + 1] };
+}
+
+function showGrid() {
+  const length = { all: 0, day: 10, month: 7, year: 4 }[scope];
+  const visible = orderedWords(words.length ? words : samples, query);
   $('#list-title').textContent = `${words.length ? '所有单词' : '示例词块'} · ${visible.length}`;
   const grid = $('#grid');
   if (!visible.length) {
@@ -304,6 +316,10 @@ function examplePreview(example) {
 }
 
 function showWord(word) {
+  const { previous, next } = adjacentWords(word);
+  const link = (entry, label) => entry
+    ? `<a href="#word/${safe(encodeURIComponent(entry.id))}">${label}</a>`
+    : `<button type="button" disabled>${label}</button>`;
   const examples = examplesFor(word);
   const missing = [
     ...(!word.us ? ['美式音标'] : []),
@@ -312,7 +328,10 @@ function showWord(word) {
     ...(!examples.length ? ['例句'] : [])
   ];
   view.innerHTML = `<article class="detail">
-    <a class="back" href="#words">← 返回单词本</a>
+    <div class="detail-navigation">
+      <a class="back" href="#words">← 返回单词本</a>
+      <nav aria-label="单词导航">${link(previous, "← 上一词")}${link(next, "下一词 →")}</nav>
+    </div>
     <div class="detail-head level-${word.level}">
       <small>${word.sample ? '示例词块 · ' : '录入于 '}${safe(word.added)}</small>
       <h1>${safe(word.word)}</h1><p class="definition">${safe(word.meaning || '中文释义待补充')}</p>
@@ -1140,12 +1159,23 @@ view.addEventListener('click', async (event) => {
   }
   if (button.hasAttribute('data-refresh')) refreshWord(word, button);
   if (button.hasAttribute('data-edit')) openEditor(word);
-  if (level !== undefined && word.level !== Number(level)) {
+  if (level !== undefined) {
+    const { next } = adjacentWords(word);
+    const options = view.querySelectorAll("[data-level]");
+    for (const option of options) option.disabled = true;
     const updated = { ...word, level: Number(level), masteredOn: level === '3' ? ago(0) : undefined };
-    if (await save(updated) && activeWord()?.id === word.id) {
-      showWord(updated);
-      view.querySelector('[data-level][aria-pressed="true"]').focus();
+    const saved = word.level === Number(level) || await save(updated);
+    for (const option of options) option.disabled = false;
+    if (!saved || activeWord()?.id !== word.id) return;
+    if (next) {
+      const destination = '#word/' + encodeURIComponent(next.id);
+      pronunciationDestination = destination;
+      Learning.speak(next.word, 'us', next.usAudio).catch(() => {});
+      location.hash = destination;
+      return;
     }
+    showWord(activeWord());
+    view.querySelector('[data-level][aria-pressed="true"]')?.focus();
   }
 });
 

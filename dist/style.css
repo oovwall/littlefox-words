@@ -26,3 +26,5 @@ dialog{border:1px solid var(--line);border-radius:20px;padding:22px;width:min(52
 .example-translation{display:block;margin:0 0 8px;color:var(--ink)}
 .example-headword{display:block;margin-bottom:4px}.example-accents{display:grid;gap:6px}.example-accent{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px;font-size:13px}.example-accent [data-example-ipa]{overflow-wrap:anywhere}
 .example-accents button{font-size:13px}
+
+.detail-navigation,.detail-navigation nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.detail-navigation{justify-content:space-between;margin-bottom:12px}.detail-navigation nav a,.detail-navigation nav button{font:inherit;font-size:13px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:white;color:var(--accent);text-decoration:none}.detail-navigation nav button:disabled{opacity:.45}
