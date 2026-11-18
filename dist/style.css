@@ -28,3 +28,5 @@ dialog{border:1px solid var(--line);border-radius:20px;padding:22px;width:min(52
 .example-accents button{font-size:13px}
 
 .detail-navigation,.detail-navigation nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.detail-navigation{justify-content:space-between;margin-bottom:12px}.detail-navigation nav a,.detail-navigation nav button{font:inherit;font-size:13px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:white;color:var(--accent);text-decoration:none}.detail-navigation nav button:disabled{opacity:.45}
+
+.accent-setting{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 0}.accent-setting select{font:inherit;padding:6px 12px;border:1px solid var(--line);border-radius:8px;background:white;color:var(--ink)}.mastery-chart{max-height:420px;overflow:auto}

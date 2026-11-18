@@ -233,7 +233,7 @@ function wordList() {
       <h1>我的单词本</h1>
       <p>按日期收录生词，用颜色标记熟悉度。</p>
       <div class="counts"><span>已收录 <b>${words.length}</b></span><span>已记住 <b>${mastered()}</b></span></div>
-      <a class="review-link" href="#review">开始今日复习 · ${words.filter((word) => WordReview.due(word, ago(0))).length} 词 →</a>
+      <a class="review-link" href="#review">开始单词测验 · ${words.filter((word) => word.level !== 3 && WordReview.due(word, ago(0))).length} 词 →</a>
     </section>
     <section class="section">
       <div class="toolbar">
@@ -493,7 +493,7 @@ function showStats() {
     <div class="metric">已记住总量<strong>${mastered()}</strong></div></div>
     <section class="panel"><h2>复习进度</h2><div class="review-metrics">
       <a class="metric" href="#review/today">今天已复习<strong>${words.filter((word) => word.review?.last === ago(0)).length}</strong></a>
-      <a class="metric" href="#review/tomorrow">明天到期<strong>${words.filter((word) => word.review?.due === ago(-1)).length}</strong></a>
+      <a class="metric" href="#review/tomorrow">明天到期<strong>${words.filter((word) => word.level !== 3 && word.review?.due === ago(-1)).length}</strong></a>
       <a class="metric" href="#review/weak">反复忘记<strong>${words.filter((word) => (word.review?.lapses ?? 0) >= 2).length}</strong></a>
     </div></section>
     <section class="panel">
@@ -506,6 +506,53 @@ function showStats() {
     </section></article>`;
 }
 
+
+const accents = { book: 'us', review: 'us', sentence: 'us' };
+const accentKey = 'word-blocks-accents';
+try {
+  const saved = JSON.parse(localStorage.getItem(accentKey));
+  for (const key of Object.keys(accents)) if (saved?.[key] === 'uk') accents[key] = 'uk';
+} catch { /* Use defaults. */ }
+
+function speakWord(word, context = 'book') {
+  if (!word) return;
+  const accent = accents[context];
+  Learning.speak(word.word, accent, word[accent + 'Audio']).catch(() => {});
+}
+
+function showSettings() {
+  const labels = { book: '单词本自动发音', review: '测验自动发音', sentence: '例句与跟读示范' };
+  view.innerHTML = `<article class="stats"><h1>设置中心</h1><section class="panel">
+    ${Object.entries(labels).map(([key, label]) => `<label class="accent-setting">${label}
+      <select data-accent-setting="${key}">
+        <option value="us" ${accents[key] === 'us' ? 'selected' : ''}>美音</option>
+        <option value="uk" ${accents[key] === 'uk' ? 'selected' : ''}>英音</option>
+      </select></label>`).join('')}</section></article>`;
+}
+
+let masteryScope = 'day';
+function showMastered() {
+  const entries = orderedWords(words.filter((word) => word.level === 3), '');
+  const counts = new Map(chartPeriods(masteryScope).map((period) => [period, 0]));
+  const dateLength = { day: 10, month: 7, year: 4 }[masteryScope];
+  for (const word of entries) {
+    const period = word.masteredOn?.slice(0, dateLength);
+    if (period) counts.set(period, (counts.get(period) ?? 0) + 1);
+  }
+  const periods = [...counts].sort(([a], [b]) => b.localeCompare(a));
+  const maximum = Math.max(1, ...counts.values());
+  view.innerHTML = `<article class="stats"><h1>已掌握词库</h1>
+    <section class="panel"><div class="toolbar"><h2>已掌握 ${entries.length} 词</h2>
+      ${segments({ day: '按天', month: '按月', year: '按年' }, masteryScope, 'mastery')}</div>
+      <div class="chart mastery-chart">${periods.map(([period, count]) => `<div class="chart-row">
+        <span>${safe(period)}</span><div><div class="bar learned" style="width:${100 * count / maximum}%">${count}</div></div>
+      </div>`).join('')}</div>
+      ${entries.some((word) => !word.masteredOn) ? '<p class="muted">部分旧记录没有掌握日期。</p>' : ''}
+    </section><div class="grid lesson-words">${entries.map((word) =>
+      `<a class="word level-3" href="#word/${safe(encodeURIComponent(word.id))}"><strong>${safe(word.word)}</strong><p>${safe(word.meaning ?? '')}</p></a>`).join('')
+      || '<p class="empty">还没有已掌握的单词。</p>'}</div></article>`;
+}
+
 function reviewGroup() {
   const [page, id] = location.hash.slice(1).split('/');
   if (page === 'lesson') {
@@ -515,9 +562,9 @@ function reviewGroup() {
   }
   const today = ago(0);
   if (id === 'today') return { title: '今天已复习', items: words.filter((word) => word.review?.last === today) };
-  if (id === 'tomorrow') return { title: '明天到期', items: words.filter((word) => word.review?.due === ago(-1)) };
+  if (id === 'tomorrow') return { title: '明天到期', items: words.filter((word) => word.level !== 3 && word.review?.due === ago(-1)) };
   if (id === 'weak') return { title: '反复忘记', items: words.filter((word) => (word.review?.lapses ?? 0) >= 2) };
-  return { title: '今日复习', items: words.filter((word) => WordReview.due(word, today))
+  return { title: '单词测验', items: words.filter((word) => word.level !== 3 && WordReview.due(word, today))
     .sort((a, b) => (a.review?.due ?? a.added).localeCompare(b.review?.due ?? b.added)) };
 }
 
@@ -529,7 +576,7 @@ function showReview() {
   const question = session?.mode === 'cloze' && word ? WordReview.cloze(word, lessonExamples) : null;
   const example = question ?? lessonExamples[0] ?? (word && examplesFor(word)[0]);
   const intro = `<section class="panel"><p>${session ? `本轮完成 ${session.index} 个。` : `共 ${items.length} 个生词。`}</p>
-    ${items.length ? `<div class="review-actions"><button class="primary" data-start-review="cards">开始翻卡</button>
+    ${items.length ? `<div class="review-actions"><button class="primary" data-start-review="cards">开始测验</button>
       ${pdf && items.some((item) => WordReview.cloze(item, Learning.matchedExamples(item.word, [pdf])))
         ? '<button data-start-review="cloze">练习原句填空</button>' : ''}</div>` : '<p class="muted">目前没有待练习的生词。</p>'}</section>
     ${pdf && items.length ? `<div class="grid lesson-words">${items.map((item) =>
@@ -537,11 +584,13 @@ function showReview() {
   view.innerHTML = `<article class="stats"><a class="back" href="${pdf ? '#library' : '#words'}">← 返回</a><h1>${safe(title)}</h1>
     ${word ? `<section class="panel review-card"><p class="muted">第 ${session.index + 1} / ${session.ids.length} 个</p>
       <h2>${safe(question ? question.prompt : word.word)}</h2>
+      ${!question || session.revealed ? '<button class="speaker" data-review-word aria-label="重播单词发音">🔊</button>' : ''}
       ${session.revealed ? `<p class="definition">${safe(word.meaning || '暂无中文释义')}</p>
         ${example ? `<div class="example-line">${examplePreview(example)}<button class="speaker" data-review-audio aria-label="朗读例句">🔊</button><button data-practice="${safe(example.text)}">跟读</button></div>` : ''}
         <div class="review-actions"><button data-rate="again">忘了</button><button data-rate="hard">模糊</button><button class="primary" data-rate="good">记得</button></div>`
         : `${question ? '<label>填入缺少的单词<input class="search" id="cloze-answer" autocomplete="off"></label>' : '<p class="muted">先回想中文释义，再翻卡。</p>'}
           <div class="review-actions"><button class="primary" data-reveal>显示答案</button></div>`}
+      <div class="review-actions"><button data-rate="mastered">已完全记住</button></div>
       ${session.feedback ? `<p role="status" class="muted">${safe(session.feedback)}</p>` : ''}
     </section>` : intro}</article>`;
 }
@@ -553,6 +602,7 @@ async function handleReview(button) {
     const selected = mode === 'cloze' ? items.filter((word) => WordReview.cloze(word, Learning.matchedExamples(word.word, [pdf]))) : items;
     reviewSession = { ids: selected.map((word) => word.id), index: 0, mode, revealed: false, feedback: '' };
     showReview();
+    if (mode !== 'cloze') speakWord(selected[0], 'review');
     view.querySelector('#cloze-answer, [data-reveal]')?.focus();
     return;
   }
@@ -565,16 +615,24 @@ async function handleReview(button) {
     if (input?.value.trim()) session.feedback = WordReview.normalize(input.value) === WordReview.normalize(word.word)
       ? '填对了。' : '正确答案是 ' + word.word + '。';
     showReview();
+    if (session.mode === 'cloze') speakWord(word, 'review');
     view.querySelector('[data-rate]')?.focus();
+  } else if (button.hasAttribute('data-review-word')) {
+    const accent = accents.review;
+    readAloud(word.word, accent, word[accent + 'Audio'], button);
   } else if (button.hasAttribute('data-review-audio')) {
     const { pdf } = reviewGroup();
     const examples = pdf ? Learning.matchedExamples(word.word, [pdf]) : [];
     const example = (session.mode === 'cloze' ? WordReview.cloze(word, examples) : examples[0]) ?? examplesFor(word)[0];
-    if (example) readAloud(example.text, 'us', undefined, button, true);
-  } else if (button.dataset.rate && session.revealed && !session.saving) {
+    if (example) readAloud(example.text, accents.sentence, undefined, button, true);
+  } else if (button.dataset.rate && (session.revealed || button.dataset.rate === 'mastered') && !session.saving) {
     session.saving = true;
     for (const control of view.querySelectorAll('[data-rate]')) control.disabled = true;
-    const success = await save(WordReview.schedule(word, button.dataset.rate, ago(0), (days) => ago(-days)));
+    const today = ago(0);
+    const rating = button.dataset.rate;
+    const scheduled = WordReview.schedule(word, rating === 'mastered' ? 'good' : rating, today, (days) => ago(-days));
+    const success = await save(rating === 'mastered'
+      ? { ...scheduled, level: 3, masteredOn: word.masteredOn || today } : scheduled);
     session.saving = false;
     if (reviewSession !== session) return;
     if (success) {
@@ -582,6 +640,7 @@ async function handleReview(button) {
       session.index++;
       session.revealed = false;
       session.feedback = '';
+      if (session.mode !== 'cloze') speakWord(words.find((item) => item.id === session.ids[session.index]), 'review');
     }
     showReview();
     view.querySelector('#cloze-answer, [data-reveal], [data-rate], [data-start-review]')?.focus();
@@ -595,18 +654,22 @@ function activeWord() {
 }
 
 function render() {
+  const settings = location.hash === '#settings';
+  const mastery = location.hash === '#mastered';
   const stats = location.hash === '#stats';
   const library = location.hash === '#library';
   const reviewing = /^#(?:review|lesson)(?:\/|$)/.test(location.hash);
   const word = activeWord();
   for (const link of document.querySelectorAll('[data-page]')) {
-    const active = link.dataset.page === (stats ? 'stats' : library ? 'library' : reviewing ? 'review' : 'words');
+    const active = link.dataset.page === (settings ? 'settings' : mastery ? 'mastered' : stats ? 'stats' : library ? 'library' : reviewing ? 'review' : 'words');
     link.classList.toggle('active', active);
     if (active) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   }
-  $('#breadcrumb').textContent = stats ? '我的词库 / 学习统计' : library ? '我的词库 / PDF 例句库' : reviewing ? '我的词库 / 复习' : '我的词库 / 单词本' + (word ? ' / 单词详情' : '');
-  if (stats) showStats();
+  $('#breadcrumb').textContent = settings ? '设置中心' : mastery ? '我的词库 / 已掌握词库' : stats ? '我的词库 / 学习统计' : library ? '我的词库 / PDF 例句库' : reviewing ? '我的词库 / 复习' : '我的词库 / 单词本' + (word ? ' / 单词详情' : '');
+  if (settings) showSettings();
+  else if (mastery) showMastered();
+  else if (stats) showStats();
   else if (library) showLibrary();
   else if (reviewing) showReview();
   else if (word) showWord(word);
@@ -734,7 +797,7 @@ form.addEventListener('submit', async (event) => {
       // Preserve the date when the user submits, including a lookup crossing midnight.
       entry = { id: crypto.randomUUID(), word: wordText, added: ago(0), addedAt: new Date().toISOString(), level: 0 };
       // Play directly from the submit gesture, before dictionary or cloud requests.
-      Learning.speak(entry.word, 'us').catch(() => {});
+      speakWord(entry);
       await libraryLoad;
       const data = await Learning.lookup(wordText, controller.signal, matchesFor(entry).length > 0);
       if (session !== formSession || !editor.open) return;
@@ -872,7 +935,7 @@ function openPractice(sentence) {
   practiceStatus.textContent = !canRecord ? '当前浏览器无法录音，请在支持麦克风的浏览器中打开。'
     : Recognition ? '' : '当前浏览器可录音回放，语音评分暂不可用。';
   practice.showModal();
-  readAloud(sentence, 'us', undefined, practicePlay, true);
+  readAloud(sentence, accents.sentence, undefined, practicePlay, true);
 }
 
 function finishPractice(run, message) {
@@ -908,7 +971,7 @@ practice.addEventListener('close', () => { closeExamplePreview(); cancelPractice
 practiceAudio.addEventListener('play', () => Learning.stopSpeech());
 practicePlay.addEventListener('click', () => {
   practiceAudio.pause();
-  readAloud(practiceSentence, 'us', undefined, practicePlay, true);
+  readAloud(practiceSentence, accents.sentence, undefined, practicePlay, true);
 });
 
 function showPracticeScore(run) {
@@ -1091,6 +1154,14 @@ document.addEventListener('click', (event) => {
   }
 });
 
+view.addEventListener('change', (event) => {
+  const key = event.target.dataset.accentSetting;
+  if (!Object.hasOwn(accents, key)) return;
+  accents[key] = event.target.value;
+  try { localStorage.setItem(accentKey, JSON.stringify(accents)); }
+  catch { toast('当前浏览器无法记住口音设置。'); }
+});
+
 view.addEventListener('click', async (event) => {
   const wordLink = event.target.closest('a[href^="#word/"]');
   if (wordLink && !event.defaultPrevented && event.button === 0
@@ -1100,12 +1171,18 @@ view.addEventListener('click', async (event) => {
     if (entry && destination !== location.hash) {
       pronunciationDestination = destination;
       // Start playback while the browser still has the click's user activation.
-      Learning.speak(entry.word, 'us', entry.usAudio).catch(() => {});
+      speakWord(entry);
     }
     return;
   }
   const button = event.target.closest('button');
   if (!button || button.closest('.example-preview')) return;
+  if (button.dataset.mastery) {
+    masteryScope = button.dataset.mastery;
+    showMastered();
+    view.querySelector('[data-mastery][aria-pressed="true"]')?.focus();
+    return;
+  }
   if (button.dataset.practice) {
     openPractice(button.dataset.practice);
     return;
@@ -1155,7 +1232,7 @@ view.addEventListener('click', async (event) => {
   if (accent) readAloud(word.word, accent, word[accent + 'Audio'], button);
   if (button.dataset.sentence !== undefined) {
     const example = examplesFor(word)[Number(button.dataset.sentence)];
-    if (example) readAloud(example.text, 'us', undefined, button, true);
+    if (example) readAloud(example.text, accents.sentence, undefined, button, true);
   }
   if (button.hasAttribute('data-refresh')) refreshWord(word, button);
   if (button.hasAttribute('data-edit')) openEditor(word);
@@ -1170,7 +1247,7 @@ view.addEventListener('click', async (event) => {
     if (next) {
       const destination = '#word/' + encodeURIComponent(next.id);
       pronunciationDestination = destination;
-      Learning.speak(next.word, 'us', next.usAudio).catch(() => {});
+      speakWord(next);
       location.hash = destination;
       return;
     }
