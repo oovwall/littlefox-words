@@ -889,6 +889,7 @@ function clearPracticeAudio() {
 
 function releaseMicrophone(run) {
   cancelAnimationFrame(run.frame);
+  clearInterval(run.silenceTimer);
   practiceWave.hidden = true;
   if (run.audioContext) run.audioContext.close().catch(() => {});
   run.audioContext = undefined;
@@ -901,6 +902,21 @@ function drawPracticeWave(run) {
   const analyser = run.audioContext.createAnalyser();
   run.audioContext.createMediaStreamSource(run.stream).connect(analyser);
   const samples = new Uint8Array(analyser.fftSize);
+  const silenceLimit = 2000;
+  const audibleLevel = 0.012;
+  let quietSince = performance.now();
+  let rms = 0;
+  run.silenceTimer = setInterval(() => {
+    const now = performance.now();
+    if (run.audioContext?.state !== 'running') {
+      quietSince = now;
+      return;
+    }
+    analyser.getByteTimeDomainData(samples);
+    rms = Math.sqrt(samples.reduce((sum, sample) => sum + ((sample - 128) / 128) ** 2, 0) / samples.length);
+    if (rms >= audibleLevel) quietSince = now;
+    if (now - quietSince >= silenceLimit) stopPracticeRecording(run);
+  }, 50);
   const canvas = practiceWave.getContext('2d');
   if (!canvas) return;
   const { width, height } = practiceWave;
@@ -913,9 +929,7 @@ function drawPracticeWave(run) {
     run.frame = requestAnimationFrame(draw);
     if (now - lastFrame < (reduceMotion ? 150 : 40)) return;
     lastFrame = now;
-    analyser.getByteTimeDomainData(samples);
     canvas.clearRect(0, 0, width, height);
-    const rms = Math.sqrt(samples.reduce((sum, sample) => sum + ((sample - 128) / 128) ** 2, 0) / samples.length);
     const volume = Math.min(1, Math.max(0, rms - 0.008) * 8);
     for (let index = 0; index < barCount; index++) {
       const position = (index - (barCount - 1) / 2) / ((barCount - 1) / 2);
@@ -973,6 +987,7 @@ function finishPractice(run, message) {
 }
 
 function stopPracticeRecording(run) {
+  if (practiceRun !== run || run.stopped) return;
   clearTimeout(run.timer);
   practiceRecord.disabled = true;
   run.stopped = true;
@@ -991,6 +1006,13 @@ function stopPracticeRecording(run) {
 
 $('#close-practice').addEventListener('click', () => practice.close());
 practice.addEventListener('close', () => { closeExamplePreview(); cancelPractice(); });
+practice.addEventListener('keydown', (event) => {
+  if (!practice.open || event.code !== 'Space' || event.defaultPrevented || event.isComposing
+    || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey
+    || event.target.isContentEditable || event.target.closest('input, textarea, select, audio')) return;
+  event.preventDefault();
+  if (!event.repeat && !practiceRecord.disabled) practiceRecord.click();
+});
 practiceAudio.addEventListener('play', () => Learning.stopSpeech());
 practicePlay.addEventListener('click', () => {
   practiceAudio.pause();

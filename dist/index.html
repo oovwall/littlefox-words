@@ -75,8 +75,9 @@
     <p class="muted form-note">分数按识别文字与原句的匹配度计算。浏览器可能将语音发送给其识别服务。</p>
     <div class="review-actions">
       <button type="button" id="practice-play">听示范</button>
-      <button type="button" class="primary" id="practice-record">开始跟读</button>
+      <button type="button" class="primary" id="practice-record" aria-keyshortcuts="Space" title="空格键开始或停止录音">开始跟读</button>
     </div>
+    <p class="muted form-note">空格键开始或停止录音，静音约 2 秒自动停止。</p>
     <p id="practice-status" role="status"></p>
     <canvas id="practice-wave" width="480" height="56" hidden aria-hidden="true"></canvas>
     <div id="practice-playback" hidden>
