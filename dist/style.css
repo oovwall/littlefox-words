@@ -30,3 +30,12 @@ dialog{border:1px solid var(--line);border-radius:20px;padding:22px;width:min(52
 .detail-navigation,.detail-navigation nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.detail-navigation{justify-content:space-between;margin-bottom:12px}.detail-navigation nav a,.detail-navigation nav button{font:inherit;font-size:13px;padding:6px 10px;border:1px solid var(--line);border-radius:8px;background:white;color:var(--accent);text-decoration:none}.detail-navigation nav button:disabled{opacity:.45}
 
 .accent-setting{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 0}.accent-setting select{font:inherit;padding:6px 12px;border:1px solid var(--line);border-radius:8px;background:white;color:var(--ink)}.mastery-chart{max-height:420px;overflow:auto}
+
+.review-word-heading{display:flex;align-items:center;justify-content:space-between;gap:8px 16px;flex-wrap:wrap}
+.review-word-label{display:flex;align-items:center;gap:8px;min-width:0}
+.review-word-label h2{margin:0;overflow-wrap:anywhere}
+.review-word-audio{display:inline-grid;flex:none;place-items:center;width:32px;height:32px;padding:0;border:0;border-radius:50%;background:#f0e9fc;color:var(--accent)}
+.review-word-audio svg{width:17px;height:17px}
+.review-mastered,.review-navigation button{padding:6px 10px;font-size:13px}
+.review-navigation{display:flex;gap:8px;margin:10px 0}
+.review-navigation button:disabled{opacity:.45}
